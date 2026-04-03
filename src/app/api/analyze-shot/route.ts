@@ -50,6 +50,7 @@ Numero de tiro en la sesion: ${shotNumber}${previousContext}
 Responde SOLO con un JSON valido (sin markdown, sin backticks) con esta estructura exacta:
 {
   "overallRating": <numero del 1 al 10>,
+  "straightness": <numero del 0 al 100 que indica que tan recto fue el golpe. 100 = perfectamente recto al objetivo, 0 = completamente desviado. Evalua basandote en la trayectoria visible de la bola, el path del palo en el impacto y la posicion del cuerpo>,
   "swingTips": ["<consejo 1>", "<consejo 2>", "<consejo 3>"],
   "keyObservations": ["<observacion 1>", "<observacion 2>"],
   "comparisonToLast": "<comparacion con el tiro anterior o null si es el primer tiro>",

@@ -16,6 +16,7 @@ export default function SessionDetailPage() {
   const [shots, setShots] = useState<Shot[]>([]);
   const [selectedShot, setSelectedShot] = useState<Shot | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -53,10 +54,18 @@ export default function SessionDetailPage() {
   return (
     <div className="flex flex-1 flex-col pb-20">
       <header className="flex-shrink-0 border-b border-white/10 bg-[#111] px-4 py-3">
-        <button onClick={() => router.back()} className="text-accent text-sm mb-1">
-          ← Historial
-        </button>
-        <h1 className="text-lg font-bold">
+        <div className="flex items-center justify-between">
+          <button onClick={() => router.back()} className="text-accent text-sm">
+            ← Historial
+          </button>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="text-danger text-sm font-medium"
+          >
+            Eliminar
+          </button>
+        </div>
+        <h1 className="text-lg font-bold mt-1">
           Sesion del{' '}
           {new Date(session.startedAt).toLocaleDateString('es-ES', {
             day: 'numeric',
@@ -87,16 +96,29 @@ export default function SessionDetailPage() {
           )}
           {selectedShot.analysis?.status === 'complete' && (
             <div className="p-3 space-y-2 bg-[#111]">
-              <div className="flex items-center justify-between">
-                <span className="text-accent font-bold text-xl">
-                  {selectedShot.analysis.overallRating}/10
-                </span>
-                {selectedShot.distance && (
-                  <span className="text-accent font-medium">
-                    {Math.round(selectedShot.distance.estimated)}m
-                  </span>
-                )}
+              {/* 3 Metrics */}
+              <div className="flex gap-2">
+                <div className="flex-1 rounded-lg bg-white/5 p-2 text-center">
+                  <div className="text-lg font-bold">{getClubInfo(selectedShot.club).shortLabel}</div>
+                  <div className="text-[10px] text-zinc-500">Palo</div>
+                </div>
+                <div className="flex-1 rounded-lg bg-white/5 p-2 text-center">
+                  <div className={`text-lg font-bold ${
+                    selectedShot.analysis.straightness >= 80 ? 'text-accent' :
+                    selectedShot.analysis.straightness >= 50 ? 'text-warning' : 'text-danger'
+                  }`}>
+                    {Math.round(selectedShot.analysis.straightness)}%
+                  </div>
+                  <div className="text-[10px] text-zinc-500">Direccion</div>
+                </div>
+                <div className="flex-1 rounded-lg bg-white/5 p-2 text-center">
+                  <div className="text-lg font-bold text-accent">
+                    {selectedShot.distance ? `${Math.round(selectedShot.distance.estimated)}m` : '--'}
+                  </div>
+                  <div className="text-[10px] text-zinc-500">Distancia</div>
+                </div>
               </div>
+              <div className="text-xs text-zinc-500">{selectedShot.analysis.overallRating}/10 rating</div>
               {selectedShot.analysis.swingTips.map((tip, i) => (
                 <p key={i} className="text-sm text-zinc-300">
                   💡 {tip}
@@ -130,23 +152,60 @@ export default function SessionDetailPage() {
                 )}
               </div>
               <div className="flex-1">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 mb-0.5">
                   <span className="font-medium text-sm">Tiro #{shot.shotNumber}</span>
-                  <span className="text-xs text-zinc-500">{club.shortLabel}</span>
+                  {shot.isPersonalRecord && <span className="text-yellow-400 text-xs">🏆</span>}
                 </div>
-                <div className="text-xs text-zinc-500 mt-0.5">
-                  {shot.distance ? `${Math.round(shot.distance.estimated)}m` : 'Sin distancia'}
-                  {shot.analysis?.status === 'complete' &&
-                    ` · ${shot.analysis.overallRating}/10`}
+                <div className="flex items-center gap-3">
+                  <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs font-medium">
+                    {club.shortLabel}
+                  </span>
+                  {shot.analysis?.status === 'complete' && (
+                    <span className={`text-xs font-semibold ${
+                      shot.analysis.straightness >= 80 ? 'text-accent' :
+                      shot.analysis.straightness >= 50 ? 'text-warning' : 'text-danger'
+                    }`}>
+                      Dir: {Math.round(shot.analysis.straightness)}%
+                    </span>
+                  )}
+                  <span className="text-xs font-semibold text-accent">
+                    {shot.distance ? `${Math.round(shot.distance.estimated)}m` : '--'}
+                  </span>
                 </div>
               </div>
-              {shot.isPersonalRecord && (
-                <span className="text-yellow-400 text-xs">🏆</span>
-              )}
             </button>
           );
         })}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="mx-6 w-full max-w-sm rounded-2xl bg-[#1a1a1a] p-6">
+            <h2 className="text-lg font-bold mb-2">Eliminar sesion?</h2>
+            <p className="text-sm text-zinc-400 mb-5">
+              Se eliminaran todos los videos y datos de esta sesion. Esta accion no se puede deshacer.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 rounded-xl bg-white/10 py-3 text-sm font-medium transition-colors active:bg-white/20"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  await db.deleteSession(sessionId);
+                  router.push('/history');
+                }}
+                className="flex-1 rounded-xl bg-danger py-3 text-sm font-bold text-white transition-colors active:bg-danger/80"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <BottomNav />
     </div>

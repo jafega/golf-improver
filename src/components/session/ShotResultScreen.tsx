@@ -3,8 +3,9 @@
 import { Shot } from '@/types/session';
 import { getClubInfo, CLUBS, ClubType } from '@/types/club';
 import { useSessionStore } from '@/stores/session-store';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { loadVideo } from '@/lib/storage';
+import { speakTips, stopSpeaking } from '@/lib/speech';
 
 interface ShotResultScreenProps {
   shot: Shot;
@@ -16,7 +17,9 @@ export default function ShotResultScreen({ shot, onNextShot }: ShotResultScreenP
   const distance = shot.distance?.manualOverride ?? shot.distance?.estimated;
   const { selectedClub, setSelectedClub } = useSessionStore();
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [audioEnabled, setAudioEnabled] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hasSpokenRef = useRef(false);
 
   useEffect(() => {
     let url: string | null = null;
@@ -31,11 +34,51 @@ export default function ShotResultScreen({ shot, onNextShot }: ShotResultScreenP
     };
   }, [shot.videoStorageKey]);
 
+  // Speak tips when analysis completes
+  useEffect(() => {
+    if (
+      shot.analysis?.status === 'complete' &&
+      shot.analysis.swingTips.length > 0 &&
+      audioEnabled &&
+      !hasSpokenRef.current
+    ) {
+      hasSpokenRef.current = true;
+      speakTips(shot.analysis.swingTips, shot.analysis.overallRating);
+    }
+  }, [shot.analysis?.status, shot.analysis?.swingTips, shot.analysis?.overallRating, audioEnabled]);
+
+  // Reset spoken flag when shot changes
+  useEffect(() => {
+    hasSpokenRef.current = false;
+  }, [shot.id]);
+
+  // Stop speech on unmount
+  useEffect(() => {
+    return () => { stopSpeaking(); };
+  }, []);
+
+  const handleNextShot = useCallback(() => {
+    stopSpeaking();
+    onNextShot();
+  }, [onNextShot]);
+
   const analysis = shot.analysis;
   const isAnalyzing = !analysis || analysis.status === 'pending' || analysis.status === 'analyzing';
 
   return (
     <div className="absolute inset-0 z-40 flex flex-col bg-background/95 backdrop-blur-sm overflow-y-auto pb-20">
+      {/* Audio toggle */}
+      <button
+        onClick={() => {
+          if (audioEnabled) stopSpeaking();
+          setAudioEnabled(!audioEnabled);
+        }}
+        className="absolute top-3 left-3 z-50 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg"
+        aria-label={audioEnabled ? 'Silenciar audio' : 'Activar audio'}
+      >
+        {audioEnabled ? '🔊' : '🔇'}
+      </button>
+
       {/* Video Replay */}
       <div className="relative h-48 flex-shrink-0 bg-black">
         {videoUrl ? (
@@ -62,24 +105,50 @@ export default function ShotResultScreen({ shot, onNextShot }: ShotResultScreenP
 
       {/* Shot Info */}
       <div className="px-4 py-3">
-        {/* Distance + Club */}
-        <div className="flex items-end justify-between">
-          <div>
-            {distance != null ? (
-              <div className="text-5xl font-bold text-accent">{Math.round(distance)}m</div>
+        {/* 3 Key Metrics: Palo, Direccion, Distancia */}
+        <div className="flex items-stretch gap-3 mb-4">
+          {/* Club */}
+          <div className="flex-1 rounded-xl bg-white/5 p-3 text-center">
+            <div className="text-2xl font-bold">{club.shortLabel}</div>
+            <div className="text-xs text-zinc-500 mt-0.5">{club.label}</div>
+          </div>
+          {/* Straightness */}
+          <div className="flex-1 rounded-xl bg-white/5 p-3 text-center">
+            {analysis?.status === 'complete' ? (
+              <>
+                <div className={`text-2xl font-bold ${
+                  analysis.straightness >= 80 ? 'text-accent' :
+                  analysis.straightness >= 50 ? 'text-warning' : 'text-danger'
+                }`}>
+                  {Math.round(analysis.straightness)}%
+                </div>
+                <div className="text-xs text-zinc-500 mt-0.5">Direccion</div>
+              </>
             ) : (
-              <div className="text-2xl text-zinc-500">Calculando...</div>
-            )}
-            {shot.distance && (
-              <div className="text-xs text-zinc-500 mt-0.5">
-                Confianza: {shot.distance.confidence}
-              </div>
+              <>
+                <div className="text-2xl text-zinc-600">--%</div>
+                <div className="text-xs text-zinc-500 mt-0.5">Direccion</div>
+              </>
             )}
           </div>
-          <div className="text-right">
-            <div className="text-lg font-medium">{club.label}</div>
-            <div className="text-sm text-zinc-500">Tiro #{shot.shotNumber}</div>
+          {/* Distance */}
+          <div className="flex-1 rounded-xl bg-white/5 p-3 text-center">
+            {distance != null ? (
+              <>
+                <div className="text-2xl font-bold text-accent">{Math.round(distance)}m</div>
+                <div className="text-xs text-zinc-500 mt-0.5">Distancia</div>
+              </>
+            ) : (
+              <>
+                <div className="text-2xl text-zinc-600">--m</div>
+                <div className="text-xs text-zinc-500 mt-0.5">Distancia</div>
+              </>
+            )}
           </div>
+        </div>
+        <div className="text-xs text-zinc-600 text-right mb-2">
+          Tiro #{shot.shotNumber}
+          {shot.distance?.confidence && ` · Confianza: ${shot.distance.confidence}`}
         </div>
 
         {/* AI Analysis */}
@@ -152,7 +221,7 @@ export default function ShotResultScreen({ shot, onNextShot }: ShotResultScreenP
 
         {/* Next Shot Button */}
         <button
-          onClick={onNextShot}
+          onClick={handleNextShot}
           className="mt-4 w-full rounded-2xl bg-accent py-4 text-lg font-bold text-black transition-colors active:bg-accent/80"
         >
           Siguiente tiro

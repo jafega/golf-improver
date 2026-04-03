@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { v4 as uuidv4 } from 'uuid';
 import { useSessionStore } from '@/stores/session-store';
+import { stopSpeaking } from '@/lib/speech';
 import { createRecorder, getVideoExtension } from '@/lib/camera';
 import { saveVideo } from '@/lib/storage';
 import { generateThumbnail } from '@/lib/video-processing';
@@ -31,13 +33,18 @@ export default function SessionPage() {
     endSession,
   } = useSessionStore();
 
+  const router = useRouter();
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const [showShotList, setShowShotList] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
 
-  // Auto-start session on mount if none active
+  const sessionSavedRef = useRef(false);
+
+  // Auto-start session in memory (NOT in DB yet - only saved on first shot)
   useEffect(() => {
     if (!currentSession) {
+      sessionSavedRef.current = false;
       const session: Session = {
         id: uuidv4(),
         startedAt: new Date().toISOString(),
@@ -46,7 +53,6 @@ export default function SessionPage() {
         bestDistance: null,
       };
       startSession(session);
-      db.createSession(session);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -89,9 +95,15 @@ export default function SessionPage() {
             thumbnailDataUrl: thumbnail,
             recordedAt: new Date().toISOString(),
             duration: blob.size > 0 ? 0 : 0, // Will be updated
-            analysis: { status: 'pending', swingTips: [], overallRating: 0, keyObservations: [] },
+            analysis: { status: 'pending', swingTips: [], overallRating: 0, straightness: 0, keyObservations: [] },
             isPersonalRecord: false,
           };
+
+          // Save session to DB on first shot only
+          if (!sessionSavedRef.current) {
+            sessionSavedRef.current = true;
+            await db.createSession(currentSession);
+          }
 
           addShot(shot);
           await db.createShot(shot);
@@ -149,6 +161,7 @@ export default function SessionPage() {
           status: 'complete',
           swingTips: analysis.swingTips ?? [],
           overallRating: analysis.overallRating ?? 0,
+          straightness: analysis.straightness ?? 50,
           keyObservations: analysis.keyObservations ?? [],
           comparisonToLast: analysis.comparisonToLast,
         },
@@ -171,6 +184,7 @@ export default function SessionPage() {
           status: 'error' as const,
           swingTips: [],
           overallRating: 0,
+          straightness: 0,
           keyObservations: [],
           error: 'Error al analizar el tiro',
         },
@@ -185,6 +199,34 @@ export default function SessionPage() {
     setSessionState('ready');
   };
 
+  const handleEndSession = async () => {
+    stopSpeaking();
+    if (recorderRef.current && isRecording) {
+      recorderRef.current.stop();
+    }
+    // Only update session in DB if it was saved (i.e., had at least 1 shot)
+    if (currentSession && sessionSavedRef.current && shots.length > 0) {
+      const shotsWithDist = shots.filter((s) => s.distance?.estimated);
+      const avg = shotsWithDist.length > 0
+        ? shotsWithDist.reduce((sum, s) => sum + (s.distance!.estimated ?? 0), 0) / shotsWithDist.length
+        : null;
+      const best = shotsWithDist.length > 0
+        ? Math.max(...shotsWithDist.map((s) => s.distance!.estimated))
+        : null;
+      const updated: Session = {
+        ...currentSession,
+        endedAt: new Date().toISOString(),
+        totalShots: shots.length,
+        averageDistance: avg,
+        bestDistance: best,
+      };
+      await db.updateSession(updated);
+    }
+    endSession();
+    useSessionStore.getState().reset();
+    router.push('/');
+  };
+
   // Calculate stats
   const shotsWithDistance = shots.filter((s) => s.distance?.estimated);
   const avgDistance =
@@ -196,9 +238,18 @@ export default function SessionPage() {
 
   return (
     <div className="relative flex h-full flex-col">
-      {/* Club Selector */}
-      <div className="flex-shrink-0 bg-[#111] border-b border-white/5">
-        <ClubSelector />
+      {/* Club Selector + Exit Button */}
+      <div className="flex-shrink-0 flex items-center bg-[#111] border-b border-white/5">
+        <div className="flex-1 overflow-hidden">
+          <ClubSelector />
+        </div>
+        <button
+          onClick={() => setShowExitConfirm(true)}
+          disabled={isRecording}
+          className="flex-shrink-0 px-3 py-2 mr-1 text-danger text-sm font-medium disabled:opacity-30"
+        >
+          Salir
+        </button>
       </div>
 
       {/* Camera Viewfinder */}
@@ -262,6 +313,33 @@ export default function SessionPage() {
       {/* Post-Shot Result Screen */}
       {sessionState === 'post-shot' && lastShot && (
         <ShotResultScreen shot={lastShot} onNextShot={handleNextShot} />
+      )}
+
+      {/* Exit Confirmation Modal */}
+      {showExitConfirm && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="mx-6 w-full max-w-sm rounded-2xl bg-[#1a1a1a] p-6">
+            <h2 className="text-lg font-bold mb-2">Terminar sesion?</h2>
+            <p className="text-sm text-zinc-400 mb-5">
+              Has hecho {shots.length} tiro{shots.length !== 1 ? 's' : ''} en esta sesion.
+              {shots.length > 0 ? ' Los datos se guardaran en el historial.' : ''}
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowExitConfirm(false)}
+                className="flex-1 rounded-xl bg-white/10 py-3 text-sm font-medium transition-colors active:bg-white/20"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleEndSession}
+                className="flex-1 rounded-xl bg-danger py-3 text-sm font-bold text-white transition-colors active:bg-danger/80"
+              >
+                Terminar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

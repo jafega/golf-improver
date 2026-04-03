@@ -29,6 +29,7 @@ export interface ShotAnalysis {
   status: 'pending' | 'analyzing' | 'complete' | 'error';
   swingTips: string[];
   overallRating: number;
+  straightness: number; // 0-100: 100 = perfectly straight, 0 = completely off-line
   keyObservations: string[];
   comparisonToLast?: string;
   trajectoryPoints?: { x: number; y: number; frame: number }[];

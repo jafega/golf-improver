@@ -11,7 +11,7 @@ interface ShotCardProps {
 export default function ShotCard({ shot, onTap }: ShotCardProps) {
   const club = getClubInfo(shot.club);
   const distance = shot.distance?.manualOverride ?? shot.distance?.estimated;
-  const analysisStatus = shot.analysis?.status ?? 'pending';
+  const straightness = shot.analysis?.status === 'complete' ? shot.analysis.straightness : null;
 
   return (
     <button
@@ -33,37 +33,48 @@ export default function ShotCard({ shot, onTap }: ShotCardProps) {
         )}
       </div>
 
-      {/* Info */}
+      {/* 3 Key Metrics */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 mb-1">
           <span className="font-medium text-sm">Tiro #{shot.shotNumber}</span>
-          <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs text-zinc-400">
-            {club.shortLabel}
-          </span>
+          {shot.isPersonalRecord && (
+            <span className="text-yellow-400 text-xs">🏆</span>
+          )}
         </div>
-        <div className="flex items-center gap-2 mt-0.5">
-          {distance != null ? (
-            <span className="text-accent text-sm font-semibold">{Math.round(distance)}m</span>
-          ) : (
-            <span className="text-zinc-500 text-xs">Sin distancia</span>
-          )}
-          {analysisStatus === 'analyzing' && (
-            <span className="text-warning text-xs">Analizando...</span>
-          )}
-          {analysisStatus === 'complete' && shot.analysis && (
-            <span className="text-zinc-400 text-xs">
-              {shot.analysis.overallRating}/10
+        <div className="flex items-center gap-3">
+          {/* Club */}
+          <div className="flex items-center gap-1">
+            <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs font-medium text-zinc-300">
+              {club.shortLabel}
             </span>
-          )}
+          </div>
+          {/* Straightness */}
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-zinc-500">Dir:</span>
+            {straightness != null ? (
+              <span className={`text-xs font-semibold ${
+                straightness >= 80 ? 'text-accent' :
+                straightness >= 50 ? 'text-warning' : 'text-danger'
+              }`}>
+                {Math.round(straightness)}%
+              </span>
+            ) : (
+              <span className="text-xs text-zinc-600">--</span>
+            )}
+          </div>
+          {/* Distance */}
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-zinc-500">Dist:</span>
+            {distance != null ? (
+              <span className="text-xs font-semibold text-accent">
+                {Math.round(distance)}m
+              </span>
+            ) : (
+              <span className="text-xs text-zinc-600">--</span>
+            )}
+          </div>
         </div>
       </div>
-
-      {/* Record badge */}
-      {shot.isPersonalRecord && (
-        <span className="rounded-full bg-yellow-500/20 px-2 py-0.5 text-xs text-yellow-400 font-medium">
-          Record!
-        </span>
-      )}
     </button>
   );
 }
