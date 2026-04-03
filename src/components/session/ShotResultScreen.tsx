@@ -6,6 +6,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { loadVideo } from '@/lib/storage';
 import { speakTips, stopSpeaking } from '@/lib/speech';
+import { playRecordSound } from '@/lib/sounds';
 
 interface ShotResultScreenProps {
   shot: Shot;
@@ -33,6 +34,13 @@ export default function ShotResultScreen({ shot, onNextShot }: ShotResultScreenP
       if (url) URL.revokeObjectURL(url);
     };
   }, [shot.videoStorageKey]);
+
+  // Play record celebration sound
+  useEffect(() => {
+    if (shot.isPersonalRecord && audioEnabled) {
+      playRecordSound();
+    }
+  }, [shot.isPersonalRecord, audioEnabled]);
 
   // Speak tips when analysis completes
   useEffect(() => {

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { v4 as uuidv4 } from 'uuid';
 import { useSessionStore } from '@/stores/session-store';
 import { stopSpeaking } from '@/lib/speech';
+import { playGolfHitSound, warmUpAudio } from '@/lib/sounds';
 import { createRecorder, getVideoExtension } from '@/lib/camera';
 import { saveVideo } from '@/lib/storage';
 import { generateThumbnail } from '@/lib/video-processing';
@@ -120,6 +121,9 @@ export default function SessionPage() {
       recorder.start(1000); // Collect data every second
       setRecording(true);
 
+      // Warm up audio context on first user gesture (needed for mobile)
+      warmUpAudio();
+
       // Haptic feedback
       if (navigator.vibrate) navigator.vibrate(50);
     }
@@ -129,7 +133,9 @@ export default function SessionPage() {
     if (recorderRef.current && isRecording) {
       recorderRef.current.stop();
       setRecording(false);
-      if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
+
+      // Play golf hit sound effect
+      playGolfHitSound();
     }
   }, [isRecording, setRecording]);
 
