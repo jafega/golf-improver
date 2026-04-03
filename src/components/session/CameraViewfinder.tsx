@@ -107,41 +107,104 @@ export default function CameraViewfinder({
     const cols = W / cellW;
     const rows = H / cellH;
 
-    const whiteCells: { col: number; row: number; count: number }[] = [];
-    const darkCells: { col: number; row: number; count: number }[] = [];
+    // === BALL DETECTION ===
+    // Golf ball: small (6-20px diameter at 192px), very white, circular,
+    // surrounded by grass/ground (NOT other white pixels = face/shirt)
+    const ballCandidates: { cx: number; cy: number; r: number; score: number }[] = [];
 
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        let whiteCount = 0;
-        let darkCount = 0;
-        const startX = col * cellW;
-        const startY = row * cellH;
+    // Scan at pixel level for small bright circular blobs in the lower 65% of frame
+    const startScanY = Math.floor(H * 0.35);
+    for (let y = startScanY + 4; y < H - 4; y += 3) {
+      for (let x = 4; x < W - 4; x += 3) {
+        const i = (y * W + x) * 4;
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        const brightness = (r + g + b) / 3;
 
-        // Sample every 2nd pixel in cell for speed
-        for (let y = startY; y < startY + cellH; y += 2) {
-          for (let x = startX; x < startX + cellW; x += 2) {
-            const i = (y * W + x) * 4;
-            const r = d[i], g = d[i + 1], b = d[i + 2];
-            const brightness = (r + g + b) / 3;
+        // Must be very white and neutral
+        if (brightness < 210 || Math.abs(r - g) > 25 || Math.abs(g - b) > 25) continue;
 
-            // White ball: very bright, low saturation
-            if (brightness > 195 && Math.abs(r - g) < 35 && Math.abs(g - b) < 35 && Math.abs(r - b) < 35) {
-              whiteCount++;
-            }
-            // Dark club: very dark
-            if (brightness < 55) {
-              darkCount++;
+        // Check if it's a small isolated bright spot:
+        // Count white pixels in a 10px radius, and non-white in the ring 10-16px
+        let innerWhite = 0, innerTotal = 0;
+        let outerWhite = 0, outerTotal = 0;
+
+        for (let dy = -8; dy <= 8; dy += 2) {
+          for (let dx = -8; dx <= 8; dx += 2) {
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+            const ni = (ny * W + nx) * 4;
+            const nb = (d[ni] + d[ni + 1] + d[ni + 2]) / 3;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist <= 5) {
+              innerTotal++;
+              if (nb > 200 && Math.abs(d[ni] - d[ni + 1]) < 30) innerWhite++;
+            } else if (dist <= 10) {
+              outerTotal++;
+              if (nb > 200 && Math.abs(d[ni] - d[ni + 1]) < 30) outerWhite++;
             }
           }
         }
 
-        const samplesPerCell = (cellW / 2) * (cellH / 2); // 64
-        if (whiteCount > samplesPerCell * 0.25) {
-          whiteCells.push({ col, row, count: whiteCount });
+        // Ball: inner is mostly white, outer ring is NOT mostly white (isolation)
+        const innerRatio = innerTotal > 0 ? innerWhite / innerTotal : 0;
+        const outerRatio = outerTotal > 0 ? outerWhite / outerTotal : 0;
+
+        if (innerRatio > 0.6 && outerRatio < 0.35) {
+          const score = innerRatio - outerRatio;
+          ballCandidates.push({ cx: x, cy: y, r: 6, score });
         }
-        if (darkCount > samplesPerCell * 0.3) {
-          darkCells.push({ col, row, count: darkCount });
+      }
+    }
+
+    // === CLUB DETECTION ===
+    // Golf club shaft: thin dark elongated line, roughly vertical or angled
+    // Scan for vertical runs of dark pixels
+    const shaftCandidates: { x: number; yStart: number; yEnd: number; score: number }[] = [];
+
+    for (let x = 4; x < W - 4; x += 4) {
+      let runStart = -1;
+      let runLen = 0;
+      let thinCount = 0;
+
+      for (let y = 0; y < H; y++) {
+        const i = (y * W + x) * 4;
+        const brightness = (d[i] + d[i + 1] + d[i + 2]) / 3;
+        const isDark = brightness < 65;
+
+        if (isDark) {
+          if (runStart === -1) runStart = y;
+          runLen++;
+
+          // Check thinness: pixels ±4px to left/right should NOT be dark
+          const leftI = (y * W + Math.max(0, x - 4)) * 4;
+          const rightI = (y * W + Math.min(W - 1, x + 4)) * 4;
+          const leftBright = (d[leftI] + d[leftI + 1] + d[leftI + 2]) / 3;
+          const rightBright = (d[rightI] + d[rightI + 1] + d[rightI + 2]) / 3;
+          if (leftBright > 80 || rightBright > 80) thinCount++;
+        } else {
+          if (runLen >= 15 && thinCount >= runLen * 0.4) {
+            // This looks like a shaft: long dark run that is thin
+            shaftCandidates.push({
+              x,
+              yStart: runStart,
+              yEnd: runStart + runLen,
+              score: runLen * (thinCount / runLen),
+            });
+          }
+          runStart = -1;
+          runLen = 0;
+          thinCount = 0;
         }
+      }
+      // Close any open run
+      if (runLen >= 15 && thinCount >= runLen * 0.4) {
+        shaftCandidates.push({
+          x,
+          yStart: runStart,
+          yEnd: runStart + runLen,
+          score: runLen * (thinCount / runLen),
+        });
       }
     }
 
@@ -149,52 +212,35 @@ export default function CameraViewfinder({
     let hasBall = false;
     let hasClub = false;
 
-    // Cluster white cells - ball must be SMALL and COMPACT (1-3 cells)
-    // A face/skin is much larger (4+ cells) so we reject big clusters
-    const whiteClusters = findAllClusters(whiteCells);
-    for (const cluster of whiteClusters) {
-      const cw = cluster.maxCol - cluster.minCol + 1;
-      const ch = cluster.maxRow - cluster.minRow + 1;
-      const area = cluster.cells.length;
-      // Ball: small (1-3 cells), roughly square-ish (not wide like a face)
-      // Must be in lower 60% of frame (ball is on the ground, not a face)
-      const centerRow = (cluster.minRow + cluster.maxRow) / 2;
-      const isLowerHalf = centerRow >= rows * 0.35;
-      if (area >= 1 && area <= 3 && cw <= 2 && ch <= 2 && isLowerHalf) {
-        hasBall = true;
-        boxes.push({
-          x: (cluster.minCol * cellW) / W,
-          y: (cluster.minRow * cellH) / H,
-          w: (cw * cellW) / W,
-          h: (ch * cellH) / H,
-          label: 'Bola',
-          color: '#22c55e',
-        });
-        break; // Only show one ball
-      }
+    // Pick best ball candidate
+    if (ballCandidates.length > 0) {
+      ballCandidates.sort((a, b) => b.score - a.score);
+      const best = ballCandidates[0];
+      hasBall = true;
+      const boxSize = 14;
+      boxes.push({
+        x: (best.cx - boxSize / 2) / W,
+        y: (best.cy - boxSize / 2) / H,
+        w: boxSize / W,
+        h: boxSize / H,
+        label: 'Bola',
+        color: '#22c55e',
+      });
     }
 
-    // Cluster dark cells - club must be ELONGATED (tall and narrow)
-    // A shaft is typically 1-3 cells wide but 3+ cells tall
-    const darkClusters = findAllClusters(darkCells);
-    for (const cluster of darkClusters) {
-      const cw = cluster.maxCol - cluster.minCol + 1;
-      const ch = cluster.maxRow - cluster.minRow + 1;
-      const area = cluster.cells.length;
-      // Club shaft: elongated (height > width*1.5 or width > height*1.5), minimum 3 cells
-      const isElongated = (ch >= cw * 1.5 || cw >= ch * 1.5);
-      if (area >= 3 && area <= 20 && isElongated) {
-        hasClub = true;
-        boxes.push({
-          x: (cluster.minCol * cellW) / W,
-          y: (cluster.minRow * cellH) / H,
-          w: (cw * cellW) / W,
-          h: (ch * cellH) / H,
-          label: 'Palo',
-          color: '#3b82f6',
-        });
-        break; // Only show one club
-      }
+    // Pick best shaft candidate
+    if (shaftCandidates.length > 0) {
+      shaftCandidates.sort((a, b) => b.score - a.score);
+      const best = shaftCandidates[0];
+      hasClub = true;
+      boxes.push({
+        x: (best.x - 6) / W,
+        y: best.yStart / H,
+        w: 12 / W,
+        h: (best.yEnd - best.yStart) / H,
+        label: 'Palo',
+        color: '#3b82f6',
+      });
     }
 
     return { boxes, hasBall, hasClub };
@@ -389,58 +435,3 @@ export default function CameraViewfinder({
   );
 }
 
-interface Cluster {
-  cells: { col: number; row: number }[];
-  minCol: number;
-  maxCol: number;
-  minRow: number;
-  maxRow: number;
-}
-
-// Find all connected clusters of cells, sorted by size descending
-function findAllClusters(
-  cells: { col: number; row: number; count: number }[]
-): Cluster[] {
-  if (cells.length === 0) return [];
-
-  const key = (c: number, r: number) => `${c},${r}`;
-  const cellSet = new Set(cells.map((c) => key(c.col, c.row)));
-  const visited = new Set<string>();
-  const clusters: Cluster[] = [];
-
-  for (const cell of cells) {
-    const k = key(cell.col, cell.row);
-    if (visited.has(k)) continue;
-
-    const clusterCells: { col: number; row: number }[] = [];
-    const queue = [{ col: cell.col, row: cell.row }];
-    visited.add(k);
-
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      clusterCells.push(cur);
-
-      for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const nc = cur.col + dc;
-        const nr = cur.row + dr;
-        const nk = key(nc, nr);
-        if (cellSet.has(nk) && !visited.has(nk)) {
-          visited.add(nk);
-          queue.push({ col: nc, row: nr });
-        }
-      }
-    }
-
-    clusters.push({
-      cells: clusterCells,
-      minCol: Math.min(...clusterCells.map((c) => c.col)),
-      maxCol: Math.max(...clusterCells.map((c) => c.col)),
-      minRow: Math.min(...clusterCells.map((c) => c.row)),
-      maxRow: Math.max(...clusterCells.map((c) => c.row)),
-    });
-  }
-
-  // Sort by size descending
-  clusters.sort((a, b) => b.cells.length - a.cells.length);
-  return clusters;
-}

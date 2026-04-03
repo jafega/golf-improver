@@ -1,6 +1,7 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import { Session, Shot, ShotAnalysis, DistanceEstimate } from '@/types/session';
 import { PersonalRecord } from '@/types/records';
+import { CourseData } from '@/types/course';
 
 interface GolfImproverDB extends DBSchema {
   sessions: {
@@ -26,26 +27,37 @@ interface GolfImproverDB extends DBSchema {
     key: string;
     value: { key: string; value: unknown };
   };
+  courses: {
+    key: string;
+    value: CourseData;
+    indexes: { 'by-placeId': string };
+  };
 }
 
 let dbPromise: Promise<IDBPDatabase<GolfImproverDB>> | null = null;
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<GolfImproverDB>('golf-improver', 1, {
-      upgrade(db) {
-        const sessionStore = db.createObjectStore('sessions', { keyPath: 'id' });
-        sessionStore.createIndex('by-date', 'startedAt');
+    dbPromise = openDB<GolfImproverDB>('golf-improver', 2, {
+      upgrade(db, oldVersion) {
+        if (oldVersion < 1) {
+          const sessionStore = db.createObjectStore('sessions', { keyPath: 'id' });
+          sessionStore.createIndex('by-date', 'startedAt');
 
-        const shotStore = db.createObjectStore('shots', { keyPath: 'id' });
-        shotStore.createIndex('by-session', 'sessionId');
-        shotStore.createIndex('by-club', 'club');
-        shotStore.createIndex('by-date', 'recordedAt');
+          const shotStore = db.createObjectStore('shots', { keyPath: 'id' });
+          shotStore.createIndex('by-session', 'sessionId');
+          shotStore.createIndex('by-club', 'club');
+          shotStore.createIndex('by-date', 'recordedAt');
 
-        const recordStore = db.createObjectStore('records', { keyPath: 'id' });
-        recordStore.createIndex('by-club', 'club');
+          const recordStore = db.createObjectStore('records', { keyPath: 'id' });
+          recordStore.createIndex('by-club', 'club');
 
-        db.createObjectStore('settings', { keyPath: 'key' });
+          db.createObjectStore('settings', { keyPath: 'key' });
+        }
+        if (oldVersion < 2) {
+          const courseStore = db.createObjectStore('courses', { keyPath: 'id' });
+          courseStore.createIndex('by-placeId', 'placeId');
+        }
       },
     });
   }
@@ -167,4 +179,30 @@ export async function getSetting<T>(key: string): Promise<T | undefined> {
 export async function setSetting(key: string, value: unknown): Promise<void> {
   const db = await getDB();
   await db.put('settings', { key, value });
+}
+
+// Courses
+export async function saveCourse(course: CourseData): Promise<void> {
+  const db = await getDB();
+  await db.put('courses', course);
+}
+
+export async function getCourse(id: string): Promise<CourseData | undefined> {
+  const db = await getDB();
+  return db.get('courses', id);
+}
+
+export async function getAllCourses(): Promise<CourseData[]> {
+  const db = await getDB();
+  return db.getAll('courses');
+}
+
+export async function getCourseByPlaceId(placeId: string): Promise<CourseData | undefined> {
+  const db = await getDB();
+  return db.getFromIndex('courses', 'by-placeId', placeId);
+}
+
+export async function deleteCourse(id: string): Promise<void> {
+  const db = await getDB();
+  await db.delete('courses', id);
 }

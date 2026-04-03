@@ -7,6 +7,7 @@ const tabs = [
   { href: '/session', label: 'Sesion', icon: '⛳' },
   { href: '/history', label: 'Historial', icon: '📋' },
   { href: '/records', label: 'Records', icon: '🏆' },
+  { href: '/campo', label: 'Campo', icon: '📍' },
   { href: '/settings', label: 'Ajustes', icon: '⚙️' },
 ];
 
