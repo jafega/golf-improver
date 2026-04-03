@@ -108,53 +108,66 @@ export default function CameraViewfinder({
     const rows = H / cellH;
 
     // === BALL DETECTION ===
-    // Golf ball: small (6-20px diameter at 192px), very white, circular,
-    // surrounded by grass/ground (NOT other white pixels = face/shirt)
-    const ballCandidates: { cx: number; cy: number; r: number; score: number }[] = [];
+    // Golf ball at 192x144 from 2-5m behind: only ~2-6px diameter
+    // Strategy: find bright pixels that are BRIGHTER than their immediate surroundings
+    // (local contrast), neutral color, in the lower portion of the frame
+    const ballCandidates: { cx: number; cy: number; score: number }[] = [];
 
-    // Scan at pixel level for small bright circular blobs in the lower 65% of frame
-    const startScanY = Math.floor(H * 0.35);
-    for (let y = startScanY + 4; y < H - 4; y += 3) {
-      for (let x = 4; x < W - 4; x += 3) {
+    const startScanY = Math.floor(H * 0.3);
+    for (let y = startScanY + 3; y < H - 3; y += 2) {
+      for (let x = 3; x < W - 3; x += 2) {
         const i = (y * W + x) * 4;
-        const r = d[i], g = d[i + 1], b = d[i + 2];
-        const brightness = (r + g + b) / 3;
+        const cr = d[i], cg = d[i + 1], cb = d[i + 2];
+        const cBright = (cr + cg + cb) / 3;
 
-        // Must be very white and neutral
-        if (brightness < 210 || Math.abs(r - g) > 25 || Math.abs(g - b) > 25) continue;
+        // Must be bright-ish and neutral (white/grey ball)
+        if (cBright < 160) continue;
+        if (Math.abs(cr - cg) > 35 || Math.abs(cg - cb) > 35) continue;
 
-        // Check if it's a small isolated bright spot:
-        // Count white pixels in a 10px radius, and non-white in the ring 10-16px
-        let innerWhite = 0, innerTotal = 0;
-        let outerWhite = 0, outerTotal = 0;
+        // Check local contrast: this pixel must be significantly brighter
+        // than the average of its surrounding ring (radius 3-5px)
+        let surroundBright = 0;
+        let surroundCount = 0;
+        let innerBright = 0;
+        let innerCount = 0;
 
-        for (let dy = -8; dy <= 8; dy += 2) {
-          for (let dx = -8; dx <= 8; dx += 2) {
+        for (let dy = -5; dy <= 5; dy++) {
+          for (let dx = -5; dx <= 5; dx++) {
             const nx = x + dx, ny = y + dy;
             if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
             const ni = (ny * W + nx) * 4;
             const nb = (d[ni] + d[ni + 1] + d[ni + 2]) / 3;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+            const dist2 = dx * dx + dy * dy;
 
-            if (dist <= 5) {
-              innerTotal++;
-              if (nb > 200 && Math.abs(d[ni] - d[ni + 1]) < 30) innerWhite++;
-            } else if (dist <= 10) {
-              outerTotal++;
-              if (nb > 200 && Math.abs(d[ni] - d[ni + 1]) < 30) outerWhite++;
+            if (dist2 <= 4) { // radius ~2px = inner (ball core)
+              innerBright += nb;
+              innerCount++;
+            } else if (dist2 <= 25) { // radius 3-5px = surrounding
+              surroundBright += nb;
+              surroundCount++;
             }
           }
         }
 
-        // Ball: inner is mostly white, outer ring is NOT mostly white (isolation)
-        const innerRatio = innerTotal > 0 ? innerWhite / innerTotal : 0;
-        const outerRatio = outerTotal > 0 ? outerWhite / outerTotal : 0;
+        const avgInner = innerCount > 0 ? innerBright / innerCount : 0;
+        const avgSurround = surroundCount > 0 ? surroundBright / surroundCount : 255;
 
-        if (innerRatio > 0.6 && outerRatio < 0.35) {
-          const score = innerRatio - outerRatio;
-          ballCandidates.push({ cx: x, cy: y, r: 6, score });
+        // Ball must be at least 40 brightness units above surroundings (local contrast)
+        // and the surrounding must NOT be very bright (reject white surfaces)
+        const contrast = avgInner - avgSurround;
+        if (contrast > 35 && avgSurround < 180) {
+          ballCandidates.push({ cx: x, cy: y, score: contrast });
         }
       }
+    }
+
+    // Deduplicate nearby candidates (within 8px = same ball)
+    const dedupedBalls: typeof ballCandidates = [];
+    for (const c of ballCandidates.sort((a, b) => b.score - a.score)) {
+      const tooClose = dedupedBalls.some(
+        (d2) => Math.abs(d2.cx - c.cx) < 8 && Math.abs(d2.cy - c.cy) < 8
+      );
+      if (!tooClose) dedupedBalls.push(c);
     }
 
     // === CLUB DETECTION ===
@@ -212,12 +225,12 @@ export default function CameraViewfinder({
     let hasBall = false;
     let hasClub = false;
 
-    // Pick best ball candidate
-    if (ballCandidates.length > 0) {
-      ballCandidates.sort((a, b) => b.score - a.score);
-      const best = ballCandidates[0];
+    // Pick best ball candidate (highest local contrast)
+    if (dedupedBalls.length > 0 && dedupedBalls.length <= 5) {
+      // If too many candidates (>5), it's probably a noisy scene, skip
+      const best = dedupedBalls[0];
       hasBall = true;
-      const boxSize = 14;
+      const boxSize = 16;
       boxes.push({
         x: (best.cx - boxSize / 2) / W,
         y: (best.cy - boxSize / 2) / H,
