@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useCampoStore } from '@/stores/campo-store';
 import { CourseData, createEmptyCourse } from '@/types/course';
 import * as db from '@/lib/db';
@@ -16,32 +16,39 @@ interface PlaceResult {
   address: string;
   lat: number;
   lng: number;
-  distance: number;
 }
 
 export default function CourseSearchModal({ onSelect, onClose }: CourseSearchModalProps) {
-  const { userPosition } = useCampoStore();
+  const userPosition = useCampoStore((s) => s.userPosition);
   const [savedCourses, setSavedCourses] = useState<CourseData[]>([]);
   const [nearbyResults, setNearbyResults] = useState<PlaceResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchDone, setSearchDone] = useState(false);
   const [manualName, setManualName] = useState('');
   const [showManual, setShowManual] = useState(false);
+  const searchedRef = useRef(false);
 
+  // Load saved courses once
   useEffect(() => {
     db.getAllCourses().then(setSavedCourses);
   }, []);
 
-  // Search nearby golf courses via Google Maps Places
+  // Search nearby ONCE when position is available
   useEffect(() => {
-    if (!userPosition) return;
+    if (!userPosition || searchedRef.current) return;
+    searchedRef.current = true;
 
     async function searchNearby() {
       setSearching(true);
       try {
-        // Use Places API via the google.maps global
         if (!window.google?.maps?.places) {
-          setSearching(false);
-          return;
+          // Google Maps not loaded yet, wait a bit
+          await new Promise((r) => setTimeout(r, 2000));
+          if (!window.google?.maps?.places) {
+            setSearching(false);
+            setSearchDone(true);
+            return;
+          }
         }
 
         const service = new window.google.maps.places.PlacesService(
@@ -51,7 +58,7 @@ export default function CourseSearchModal({ onSelect, onClose }: CourseSearchMod
         service.nearbySearch(
           {
             location: new window.google.maps.LatLng(userPosition!.lat, userPosition!.lng),
-            radius: 10000, // 10km
+            radius: 10000,
             type: 'golf_course' as unknown as string,
           },
           (results, status) => {
@@ -64,16 +71,17 @@ export default function CourseSearchModal({ onSelect, onClose }: CourseSearchMod
                   address: r.vicinity ?? '',
                   lat: r.geometry!.location!.lat(),
                   lng: r.geometry!.location!.lng(),
-                  distance: 0, // Will calculate
                 }))
                 .slice(0, 10);
               setNearbyResults(mapped);
             }
             setSearching(false);
+            setSearchDone(true);
           }
         );
       } catch {
         setSearching(false);
+        setSearchDone(true);
       }
     }
 
@@ -81,7 +89,6 @@ export default function CourseSearchModal({ onSelect, onClose }: CourseSearchMod
   }, [userPosition]);
 
   const handleSelectPlace = async (place: PlaceResult) => {
-    // Check if we already have this course saved
     const existing = place.placeId
       ? await db.getCourseByPlaceId(place.placeId)
       : undefined;
@@ -102,10 +109,7 @@ export default function CourseSearchModal({ onSelect, onClose }: CourseSearchMod
 
   const handleCreateManual = async () => {
     if (!manualName.trim() || !userPosition) return;
-    const course = createEmptyCourse(
-      manualName.trim(),
-      userPosition
-    );
+    const course = createEmptyCourse(manualName.trim(), userPosition);
     await db.saveCourse(course);
     onSelect(course);
   };
@@ -151,13 +155,13 @@ export default function CourseSearchModal({ onSelect, onClose }: CourseSearchMod
           {searching ? (
             <div className="flex items-center justify-center py-8">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-              <span className="text-sm text-zinc-500 ml-2">Buscando...</span>
+              <span className="text-sm text-zinc-500 ml-2">Buscando campos cercanos...</span>
             </div>
           ) : nearbyResults.length > 0 ? (
             <div className="space-y-2">
               {nearbyResults.map((place) => (
                 <button
-                  key={place.placeId}
+                  key={place.placeId || place.name}
                   onClick={() => handleSelectPlace(place)}
                   className="w-full rounded-xl bg-white/5 p-3 text-left active:bg-white/10"
                 >
@@ -166,11 +170,13 @@ export default function CourseSearchModal({ onSelect, onClose }: CourseSearchMod
                 </button>
               ))}
             </div>
+          ) : searchDone ? (
+            <p className="text-zinc-600 text-sm text-center py-4">
+              No se encontraron campos cercanos
+            </p>
           ) : (
             <p className="text-zinc-600 text-sm text-center py-4">
-              {userPosition
-                ? 'No se encontraron campos cercanos'
-                : 'Esperando ubicacion GPS...'}
+              Esperando ubicacion GPS...
             </p>
           )}
         </section>

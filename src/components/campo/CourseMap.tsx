@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { APIProvider, Map, AdvancedMarker, useMap, MapMouseEvent } from '@vis.gl/react-google-maps';
 import { useCampoStore } from '@/stores/campo-store';
 
@@ -16,6 +16,44 @@ function MapContent() {
     activeCourse,
     currentHole,
   } = useCampoStore();
+  const hasCenteredRef = useRef(false);
+
+  // Center map on user position when first available or when course changes
+  useEffect(() => {
+    if (!map) return;
+    if (userPosition && !hasCenteredRef.current) {
+      map.panTo(userPosition);
+      map.setZoom(18);
+      hasCenteredRef.current = true;
+    }
+  }, [map, userPosition]);
+
+  // Re-center when active course changes
+  useEffect(() => {
+    if (!map || !activeCourse) return;
+    const pos = useCampoStore.getState().userPosition;
+    if (pos) {
+      map.panTo(pos);
+      map.setZoom(18);
+    } else {
+      map.panTo(activeCourse.location);
+      map.setZoom(17);
+    }
+  }, [map, activeCourse?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Center on pin when hole changes and has a pin
+  useEffect(() => {
+    if (!map || !pinPosition) return;
+    // Fit both user and pin in view
+    if (userPosition) {
+      const bounds = new google.maps.LatLngBounds();
+      bounds.extend(userPosition);
+      bounds.extend(pinPosition);
+      map.fitBounds(bounds, 60);
+    } else {
+      map.panTo(pinPosition);
+    }
+  }, [map, currentHole]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMapClick = useCallback(
     (e: MapMouseEvent) => {
@@ -24,7 +62,6 @@ function MapContent() {
       const pos = { lat: e.detail.latLng.lat, lng: e.detail.latLng.lng };
       setPinPosition(pos);
 
-      // Save to course data in store and db
       const store = useCampoStore.getState();
       const course = store.activeCourse;
       if (course) {
@@ -33,22 +70,13 @@ function MapContent() {
         );
         const updatedCourse = { ...course, holes: updatedHoles, updatedAt: new Date().toISOString() };
         useCampoStore.setState({ activeCourse: updatedCourse });
-        // Save to IndexedDB async
         import('@/lib/db').then((db) => db.saveCourse(updatedCourse));
       }
     },
     [isPlacingPin, setPinPosition, currentHole]
   );
 
-  // Draw distance line
-  const drawLine = useCallback(() => {
-    if (!map || !userPosition || !pinPosition) return null;
-    // We use a simple polyline via the google maps API
-    return null; // Handled via useEffect below
-  }, [map, userPosition, pinPosition]);
-
-  // Center map on user or course
-  const center = userPosition ?? activeCourse?.location ?? { lat: 40.4168, lng: -3.7038 };
+  const defaultCenter = userPosition ?? activeCourse?.location ?? { lat: 40.4168, lng: -3.7038 };
 
   return (
     <>
@@ -60,12 +88,12 @@ function MapContent() {
         minZoom={14}
         maxZoom={21}
         tilt={0}
-        defaultCenter={center}
-        defaultZoom={17}
+        defaultCenter={defaultCenter}
+        defaultZoom={18}
         onClick={handleMapClick}
         className="h-full w-full"
       >
-        {/* User position - blue dot */}
+        {/* User position - blue pulsing dot */}
         {userPosition && (
           <AdvancedMarker position={userPosition}>
             <div className="relative">
@@ -75,7 +103,7 @@ function MapContent() {
           </AdvancedMarker>
         )}
 
-        {/* Pin/Flag position */}
+        {/* Flag position */}
         {pinPosition && (
           <AdvancedMarker position={pinPosition}>
             <div className="flex flex-col items-center">
@@ -88,14 +116,12 @@ function MapContent() {
         )}
       </Map>
 
-      {/* Placing pin overlay instruction */}
+      {/* Placing pin instruction */}
       {isPlacingPin && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 rounded-full bg-accent/90 px-4 py-1.5 text-xs font-bold text-black shadow-lg">
           Toca donde esta la bandera del hoyo {currentHole}
         </div>
       )}
-
-      {drawLine()}
     </>
   );
 }
