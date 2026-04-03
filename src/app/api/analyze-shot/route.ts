@@ -1,0 +1,97 @@
+import { NextRequest, NextResponse } from 'next/server';
+import Anthropic from '@anthropic-ai/sdk';
+
+const anthropic = new Anthropic();
+
+export async function POST(request: NextRequest) {
+  try {
+    const { frames, club, shotNumber, previousTips } = await request.json();
+
+    if (!frames || frames.length === 0) {
+      return NextResponse.json(
+        { error: 'No frames provided' },
+        { status: 400 }
+      );
+    }
+
+    const imageContent = frames.map((frame: { dataUrl: string; label: string }) => [
+      {
+        type: 'text' as const,
+        text: `[${frame.label}]`,
+      },
+      {
+        type: 'image' as const,
+        source: {
+          type: 'base64' as const,
+          media_type: 'image/jpeg' as const,
+          data: frame.dataUrl.replace(/^data:image\/\w+;base64,/, ''),
+        },
+      },
+    ]).flat();
+
+    const previousContext = previousTips?.length
+      ? `\nEn el tiro anterior, los consejos fueron: ${previousTips.join('. ')}. Compara con este tiro.`
+      : '';
+
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `Eres un instructor de golf profesional. Analiza estas ${frames.length} imagenes secuenciales de un swing de golf.
+
+Palo usado: ${club}
+Numero de tiro en la sesion: ${shotNumber}${previousContext}
+
+Responde SOLO con un JSON valido (sin markdown, sin backticks) con esta estructura exacta:
+{
+  "overallRating": <numero del 1 al 10>,
+  "swingTips": ["<consejo 1>", "<consejo 2>", "<consejo 3>"],
+  "keyObservations": ["<observacion 1>", "<observacion 2>"],
+  "comparisonToLast": "<comparacion con el tiro anterior o null si es el primer tiro>",
+  "distance": {
+    "estimated": <distancia estimada en metros basada en lo que ves>,
+    "confidence": "<baja|media|alta>"
+  }
+}
+
+Se conciso y practico. Habla en espanol. Los consejos deben ser accionables y especificos.`,
+            },
+            ...imageContent,
+          ],
+        },
+      ],
+    });
+
+    const textBlock = message.content.find((b) => b.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      throw new Error('No text response from Claude');
+    }
+
+    // Parse JSON response
+    let analysis;
+    try {
+      analysis = JSON.parse(textBlock.text);
+    } catch {
+      // Try to extract JSON from response
+      const jsonMatch = textBlock.text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        analysis = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error('Could not parse AI response as JSON');
+      }
+    }
+
+    return NextResponse.json(analysis);
+  } catch (error) {
+    console.error('Analysis error:', error);
+    return NextResponse.json(
+      { error: 'Error al analizar el tiro' },
+      { status: 500 }
+    );
+  }
+}
