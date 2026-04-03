@@ -149,35 +149,51 @@ export default function CameraViewfinder({
     let hasBall = false;
     let hasClub = false;
 
-    // Cluster white cells into ball bounding box
-    if (whiteCells.length >= 1 && whiteCells.length <= 8) {
-      const cluster = clusterCells(whiteCells);
-      if (cluster) {
+    // Cluster white cells - ball must be SMALL and COMPACT (1-3 cells)
+    // A face/skin is much larger (4+ cells) so we reject big clusters
+    const whiteClusters = findAllClusters(whiteCells);
+    for (const cluster of whiteClusters) {
+      const cw = cluster.maxCol - cluster.minCol + 1;
+      const ch = cluster.maxRow - cluster.minRow + 1;
+      const area = cluster.cells.length;
+      // Ball: small (1-3 cells), roughly square-ish (not wide like a face)
+      // Must be in lower 60% of frame (ball is on the ground, not a face)
+      const centerRow = (cluster.minRow + cluster.maxRow) / 2;
+      const isLowerHalf = centerRow >= rows * 0.35;
+      if (area >= 1 && area <= 3 && cw <= 2 && ch <= 2 && isLowerHalf) {
         hasBall = true;
         boxes.push({
           x: (cluster.minCol * cellW) / W,
           y: (cluster.minRow * cellH) / H,
-          w: ((cluster.maxCol - cluster.minCol + 1) * cellW) / W,
-          h: ((cluster.maxRow - cluster.minRow + 1) * cellH) / H,
+          w: (cw * cellW) / W,
+          h: (ch * cellH) / H,
           label: 'Bola',
-          color: '#22c55e', // green
+          color: '#22c55e',
         });
+        break; // Only show one ball
       }
     }
 
-    // Cluster dark cells into club bounding box
-    if (darkCells.length >= 2 && darkCells.length <= 30) {
-      const cluster = clusterCells(darkCells);
-      if (cluster) {
+    // Cluster dark cells - club must be ELONGATED (tall and narrow)
+    // A shaft is typically 1-3 cells wide but 3+ cells tall
+    const darkClusters = findAllClusters(darkCells);
+    for (const cluster of darkClusters) {
+      const cw = cluster.maxCol - cluster.minCol + 1;
+      const ch = cluster.maxRow - cluster.minRow + 1;
+      const area = cluster.cells.length;
+      // Club shaft: elongated (height > width*1.5 or width > height*1.5), minimum 3 cells
+      const isElongated = (ch >= cw * 1.5 || cw >= ch * 1.5);
+      if (area >= 3 && area <= 20 && isElongated) {
         hasClub = true;
         boxes.push({
           x: (cluster.minCol * cellW) / W,
           y: (cluster.minRow * cellH) / H,
-          w: ((cluster.maxCol - cluster.minCol + 1) * cellW) / W,
-          h: ((cluster.maxRow - cluster.minRow + 1) * cellH) / H,
+          w: (cw * cellW) / W,
+          h: (ch * cellH) / H,
           label: 'Palo',
-          color: '#3b82f6', // blue
+          color: '#3b82f6',
         });
+        break; // Only show one club
       }
     }
 
@@ -373,30 +389,36 @@ export default function CameraViewfinder({
   );
 }
 
-// Cluster adjacent cells into a bounding box
-function clusterCells(
-  cells: { col: number; row: number; count: number }[]
-): { minCol: number; maxCol: number; minRow: number; maxRow: number } | null {
-  if (cells.length === 0) return null;
+interface Cluster {
+  cells: { col: number; row: number }[];
+  minCol: number;
+  maxCol: number;
+  minRow: number;
+  maxRow: number;
+}
 
-  // Find the largest connected cluster using simple flood fill
+// Find all connected clusters of cells, sorted by size descending
+function findAllClusters(
+  cells: { col: number; row: number; count: number }[]
+): Cluster[] {
+  if (cells.length === 0) return [];
+
   const key = (c: number, r: number) => `${c},${r}`;
   const cellSet = new Set(cells.map((c) => key(c.col, c.row)));
   const visited = new Set<string>();
-  let bestCluster: { col: number; row: number }[] = [];
+  const clusters: Cluster[] = [];
 
   for (const cell of cells) {
     const k = key(cell.col, cell.row);
     if (visited.has(k)) continue;
 
-    // BFS
-    const cluster: { col: number; row: number }[] = [];
+    const clusterCells: { col: number; row: number }[] = [];
     const queue = [{ col: cell.col, row: cell.row }];
     visited.add(k);
 
     while (queue.length > 0) {
       const cur = queue.shift()!;
-      cluster.push(cur);
+      clusterCells.push(cur);
 
       for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
         const nc = cur.col + dc;
@@ -409,17 +431,16 @@ function clusterCells(
       }
     }
 
-    if (cluster.length > bestCluster.length) {
-      bestCluster = cluster;
-    }
+    clusters.push({
+      cells: clusterCells,
+      minCol: Math.min(...clusterCells.map((c) => c.col)),
+      maxCol: Math.max(...clusterCells.map((c) => c.col)),
+      minRow: Math.min(...clusterCells.map((c) => c.row)),
+      maxRow: Math.max(...clusterCells.map((c) => c.row)),
+    });
   }
 
-  if (bestCluster.length === 0) return null;
-
-  return {
-    minCol: Math.min(...bestCluster.map((c) => c.col)),
-    maxCol: Math.max(...bestCluster.map((c) => c.col)),
-    minRow: Math.min(...bestCluster.map((c) => c.row)),
-    maxRow: Math.max(...bestCluster.map((c) => c.row)),
-  };
+  // Sort by size descending
+  clusters.sort((a, b) => b.cells.length - a.cells.length);
+  return clusters;
 }
