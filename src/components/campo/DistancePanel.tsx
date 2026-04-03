@@ -1,28 +1,7 @@
 'use client';
 
+import { useState } from 'react';
 import { useCampoStore } from '@/stores/campo-store';
-import { CLUBS } from '@/types/club';
-
-function getStrategy(distanceM: number, par: number): string {
-  if (par === 3) {
-    if (distanceM <= 120) return 'Par 3 corto. Apunta al centro del green con un wedge suave.';
-    if (distanceM <= 160) return 'Par 3 medio. Hierro medio al green, evita los bunkers.';
-    return 'Par 3 largo. Hierro largo o hibrido al green. No fuerces, centro del green.';
-  }
-  if (par === 4) {
-    if (distanceM > 200) return 'Primer golpe: Driver o madera al centro del fairway. Deja un approach comodo.';
-    if (distanceM > 140) return 'Buen approach. Hierro medio apuntando al centro del green.';
-    if (distanceM > 80) return 'Wedge al green. Controla la distancia, no hace falta fuerza.';
-    return 'Cerca del green. Chip o pitch suave, deja la bola cerca del hoyo.';
-  }
-  if (par === 5) {
-    if (distanceM > 300) return 'Par 5: Driver al fairway. No arriesgues, busca posicion.';
-    if (distanceM > 200) return 'Segundo golpe: Madera o hibrido para acortar. Deja un wedge al green.';
-    if (distanceM > 100) return 'Tercer golpe: Wedge al green. Controla la distancia.';
-    return 'Cerca del green. Chip preciso, busca dejar putt corto.';
-  }
-  return 'Apunta al centro del green.';
-}
 
 export default function DistancePanel() {
   const {
@@ -31,14 +10,50 @@ export default function DistancePanel() {
     pinPosition,
     gpsError,
     gpsAccuracy,
-    isPlacingPin,
-    setIsPlacingPin,
     activeCourse,
     currentHole,
   } = useCampoStore();
 
   const holeData = activeCourse?.holes.find((h) => h.number === currentHole);
   const par = holeData?.par ?? 4;
+
+  const [strategy, setStrategy] = useState<string | null>(null);
+  const [loadingStrategy, setLoadingStrategy] = useState(false);
+
+  const askStrategy = async () => {
+    if (!distanceToPin || !recommendedClub) return;
+    setLoadingStrategy(true);
+    setStrategy(null);
+
+    try {
+      const response = await fetch('/api/analyze-shot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          frames: [], // No frames - strategy only
+          club: recommendedClub.label,
+          shotNumber: 0,
+          strategyRequest: {
+            distanceToPin: Math.round(distanceToPin),
+            par,
+            hole: currentHole,
+            courseName: activeCourse?.name ?? 'campo desconocido',
+            recommendedClub: recommendedClub.label,
+          },
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setStrategy(data.strategy ?? data.swingTips?.join('. ') ?? 'No se pudo generar estrategia.');
+      } else {
+        setStrategy('Error al obtener estrategia. Intentalo de nuevo.');
+      }
+    } catch {
+      setStrategy('Sin conexion. Intentalo de nuevo.');
+    }
+    setLoadingStrategy(false);
+  };
 
   if (gpsError) {
     return (
@@ -73,60 +88,36 @@ export default function DistancePanel() {
             )}
           </div>
 
-          {/* Strategy */}
-          <div className="rounded-xl bg-white/5 p-3 text-sm text-zinc-300">
-            <span className="text-accent mr-1">💡</span>
-            {getStrategy(distanceToPin, par)}
-          </div>
-
-          {/* Alternative clubs */}
-          {recommendedClub && distanceToPin > 30 && (
-            <div className="flex gap-2 mt-2 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-              {CLUBS.filter((c) => {
-                const diff = Math.abs(c.typicalDistanceM - distanceToPin);
-                return diff < 30 && c.type !== 'putter';
-              }).map((c) => (
-                <div
-                  key={c.type}
-                  className={`flex-shrink-0 rounded-lg px-3 py-1.5 text-xs ${
-                    c.type === recommendedClub.type
-                      ? 'bg-accent/20 text-accent font-bold'
-                      : 'bg-white/5 text-zinc-400'
-                  }`}
-                >
-                  {c.shortLabel} ~{c.typicalDistanceM}m
-                </div>
-              ))}
+          {/* AI Strategy */}
+          {strategy && (
+            <div className="rounded-xl bg-accent/10 p-3 text-sm text-zinc-200 mb-2 animate-fade-in-up">
+              <span className="text-accent font-medium">Estrategia IA:</span> {strategy}
             </div>
           )}
+
+          {/* Ask strategy button */}
+          <button
+            onClick={askStrategy}
+            disabled={loadingStrategy}
+            className="w-full rounded-xl bg-accent py-3 text-sm font-bold text-black transition-colors active:bg-accent/80 disabled:opacity-60"
+          >
+            {loadingStrategy ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-black border-t-transparent" />
+                Pensando estrategia...
+              </span>
+            ) : strategy ? (
+              'Pedir otra estrategia'
+            ) : (
+              'Pedir estrategia al caddie IA'
+            )}
+          </button>
         </div>
       ) : (
-        <div className="text-center">
-          {isPlacingPin ? (
-            <div>
-              <p className="text-accent text-sm font-medium mb-2">
-                Toca el mapa donde esta la bandera del hoyo {currentHole}
-              </p>
-              <button
-                onClick={() => setIsPlacingPin(false)}
-                className="text-zinc-500 text-xs"
-              >
-                Cancelar
-              </button>
-            </div>
-          ) : (
-            <div>
-              <p className="text-zinc-500 text-xs mb-2">
-                Hoyo {currentHole} · Par {par} · Sin bandera colocada
-              </p>
-              <button
-                onClick={() => setIsPlacingPin(true)}
-                className="w-full rounded-xl bg-accent py-3 text-sm font-bold text-black transition-colors active:bg-accent/80"
-              >
-                Colocar bandera en el mapa
-              </button>
-            </div>
-          )}
+        <div className="text-center py-2">
+          <p className="text-zinc-500 text-xs">
+            Hoyo {currentHole} · Par {par} · Toca el mapa o arrastra 🚩 para colocar la bandera
+          </p>
         </div>
       )}
     </div>

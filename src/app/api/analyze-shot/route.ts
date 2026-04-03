@@ -5,8 +5,37 @@ const anthropic = new Anthropic();
 
 export async function POST(request: NextRequest) {
   try {
-    const { frames, club, shotNumber, previousTips } = await request.json();
+    const { frames, club, shotNumber, previousTips, strategyRequest } = await request.json();
 
+    // === STRATEGY MODE (no frames needed) ===
+    if (strategyRequest) {
+      const { distanceToPin, par, hole, courseName, recommendedClub } = strategyRequest;
+      const strategyMsg = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 512,
+        messages: [
+          {
+            role: 'user',
+            content: `Eres un caddie de golf experto. El jugador esta en el hoyo ${hole} (par ${par}) del campo "${courseName}".
+La bandera esta a ${distanceToPin} metros. El palo recomendado es ${recommendedClub}.
+
+Dame una estrategia concisa y practica para este golpe en 2-3 frases. Incluye:
+- Que tipo de golpe hacer (punch, draw, fade, alto, bajo, etc.)
+- Donde apuntar (centro del green, lado izquierdo, etc.)
+- Que evitar (bunkers, agua, etc. tipicos a esta distancia)
+- Un tip de confianza mental
+
+Habla en espanol, se directo y motivador. NO uses JSON, responde en texto plano.`,
+          },
+        ],
+      });
+      const textBlock = strategyMsg.content.find((b) => b.type === 'text');
+      return NextResponse.json({
+        strategy: textBlock && textBlock.type === 'text' ? textBlock.text : 'No se pudo generar estrategia.',
+      });
+    }
+
+    // === SHOT ANALYSIS MODE ===
     if (!frames || frames.length === 0) {
       return NextResponse.json(
         { error: 'No frames provided' },
