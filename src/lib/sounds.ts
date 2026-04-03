@@ -123,6 +123,58 @@ export function playRecordSound(): void {
 }
 
 /**
+ * "Ready" detection sound - short friendly double-beep
+ * Plays when ball + club are detected in frame
+ */
+export function playReadySound(): void {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    // Two short ascending beeps
+    [880, 1100].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + i * 0.12);
+      gain.gain.setValueAtTime(0, now + i * 0.12);
+      gain.gain.linearRampToValueAtTime(0.15, now + i * 0.12 + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.12);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + i * 0.12);
+      osc.stop(now + i * 0.12 + 0.12);
+    });
+
+    if (navigator.vibrate) {
+      navigator.vibrate(30);
+    }
+  } catch (e) {
+    console.warn('Could not play ready sound:', e);
+  }
+}
+
+/**
+ * Speak "Ready" using text-to-speech
+ */
+export function speakReady(): void {
+  try {
+    if (!('speechSynthesis' in window)) return;
+    // Don't interrupt ongoing speech
+    if (window.speechSynthesis.speaking) return;
+
+    const utterance = new SpeechSynthesisUtterance('Ready');
+    utterance.lang = 'en-US';
+    utterance.rate = 1.1;
+    utterance.pitch = 1.2;
+    utterance.volume = 0.8;
+    window.speechSynthesis.speak(utterance);
+  } catch {
+    // Ignore
+  }
+}
+
+/**
  * Warm up audio context on first user interaction
  * Call this on a button press to unlock audio on mobile
  */

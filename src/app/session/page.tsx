@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { v4 as uuidv4 } from 'uuid';
 import { useSessionStore } from '@/stores/session-store';
 import { stopSpeaking } from '@/lib/speech';
-import { playGolfHitSound, warmUpAudio } from '@/lib/sounds';
+import { playGolfHitSound, playReadySound, speakReady, warmUpAudio } from '@/lib/sounds';
 import { createRecorder, getVideoExtension } from '@/lib/camera';
 import { saveVideo } from '@/lib/storage';
 import { generateThumbnail } from '@/lib/video-processing';
@@ -39,6 +39,7 @@ export default function SessionPage() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const [showShotList, setShowShotList] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
 
   const sessionSavedRef = useRef(false);
 
@@ -59,6 +60,16 @@ export default function SessionPage() {
 
   const handleStreamReady = useCallback((stream: MediaStream) => {
     streamRef.current = stream;
+  }, []);
+
+  const handleToggleCamera = useCallback(() => {
+    if (isRecording) return;
+    setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
+  }, [isRecording]);
+
+  const handleReadyDetected = useCallback(() => {
+    playReadySound();
+    speakReady();
   }, []);
 
   const handleRecord = useCallback(() => {
@@ -262,6 +273,9 @@ export default function SessionPage() {
       <CameraViewfinder
         onStreamReady={handleStreamReady}
         isRecording={isRecording}
+        facingMode={facingMode}
+        onToggleCamera={handleToggleCamera}
+        onReadyDetected={handleReadyDetected}
       />
 
       {/* Stats Bar */}
