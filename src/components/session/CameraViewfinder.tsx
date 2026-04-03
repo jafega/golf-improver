@@ -3,6 +3,15 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { requestCamera, stopStream } from '@/lib/camera';
 
+interface DetectionBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  label: string;
+  color: string;
+}
+
 interface CameraViewfinderProps {
   onStreamReady: (stream: MediaStream) => void;
   isRecording: boolean;
@@ -19,19 +28,21 @@ export default function CameraViewfinder({
   onReadyDetected,
 }: CameraViewfinderProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const analysisCanvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState<string | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const detectionIntervalRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const lastDetectTimeRef = useRef(0);
   const [isReady, setIsReady] = useState(false);
   const readyCalledRef = useRef(false);
+  const detectionsRef = useRef<DetectionBox[]>([]);
 
   // Init or switch camera
   useEffect(() => {
     let mounted = true;
 
     async function initCamera() {
-      // Stop previous stream
       if (streamRef.current) {
         stopStream(streamRef.current);
         streamRef.current = null;
@@ -72,101 +83,230 @@ export default function CameraViewfinder({
     };
   }, [facingMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Ball + club detection loop (only when not recording)
-  const detectBallAndClub = useCallback(() => {
+  // Detect ball and club, returns bounding boxes in normalized coords (0-1)
+  const runDetection = useCallback((): { boxes: DetectionBox[]; hasBall: boolean; hasClub: boolean } => {
     const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState < 2) return false;
+    const canvas = analysisCanvasRef.current;
+    if (!video || !canvas || video.readyState < 2) return { boxes: [], hasBall: false, hasClub: false };
 
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return false;
+    if (!ctx) return { boxes: [], hasBall: false, hasClub: false };
 
-    // Sample at lower resolution for performance
-    const w = 160;
-    const h = 120;
-    canvas.width = w;
-    canvas.height = h;
-    ctx.drawImage(video, 0, 0, w, h);
+    const W = 192;
+    const H = 144;
+    canvas.width = W;
+    canvas.height = H;
+    ctx.drawImage(video, 0, 0, W, H);
 
-    const imageData = ctx.getImageData(0, 0, w, h);
-    const data = imageData.data;
+    const imageData = ctx.getImageData(0, 0, W, H);
+    const d = imageData.data;
 
-    let whiteBrightPixels = 0; // Potential ball pixels
-    let darkPixels = 0; // Potential club/shaft pixels
-    let greenPixels = 0; // Grass detection
+    // Grid-based clustering for speed: divide into 12x9 cells
+    const cellW = 16;
+    const cellH = 16;
+    const cols = W / cellW;
+    const rows = H / cellH;
 
-    for (let i = 0; i < data.length; i += 16) { // Sample every 4th pixel for speed
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      const brightness = (r + g + b) / 3;
+    const whiteCells: { col: number; row: number; count: number }[] = [];
+    const darkCells: { col: number; row: number; count: number }[] = [];
 
-      // White ball detection: very bright, low saturation
-      if (brightness > 200 && Math.abs(r - g) < 30 && Math.abs(g - b) < 30) {
-        whiteBrightPixels++;
-      }
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        let whiteCount = 0;
+        let darkCount = 0;
+        const startX = col * cellW;
+        const startY = row * cellH;
 
-      // Dark elongated object (club shaft): very dark
-      if (brightness < 60) {
-        darkPixels++;
-      }
+        // Sample every 2nd pixel in cell for speed
+        for (let y = startY; y < startY + cellH; y += 2) {
+          for (let x = startX; x < startX + cellW; x += 2) {
+            const i = (y * W + x) * 4;
+            const r = d[i], g = d[i + 1], b = d[i + 2];
+            const brightness = (r + g + b) / 3;
 
-      // Green grass: g channel dominant
-      if (g > 80 && g > r * 1.2 && g > b * 1.1) {
-        greenPixels++;
+            // White ball: very bright, low saturation
+            if (brightness > 195 && Math.abs(r - g) < 35 && Math.abs(g - b) < 35 && Math.abs(r - b) < 35) {
+              whiteCount++;
+            }
+            // Dark club: very dark
+            if (brightness < 55) {
+              darkCount++;
+            }
+          }
+        }
+
+        const samplesPerCell = (cellW / 2) * (cellH / 2); // 64
+        if (whiteCount > samplesPerCell * 0.25) {
+          whiteCells.push({ col, row, count: whiteCount });
+        }
+        if (darkCount > samplesPerCell * 0.3) {
+          darkCells.push({ col, row, count: darkCount });
+        }
       }
     }
 
-    const totalSampled = (data.length / 16);
-    const whitePct = whiteBrightPixels / totalSampled;
-    const darkPct = darkPixels / totalSampled;
-    const greenPct = greenPixels / totalSampled;
+    const boxes: DetectionBox[] = [];
+    let hasBall = false;
+    let hasClub = false;
 
-    // Ball detected: small white area (0.5%-5% of frame)
-    const hasBall = whitePct > 0.005 && whitePct < 0.05;
-    // Club detected: some dark area (2%-25% of frame)
-    const hasClub = darkPct > 0.02 && darkPct < 0.25;
-    // On grass/range: reasonable green area (>5%)
-    const hasGrass = greenPct > 0.05;
+    // Cluster white cells into ball bounding box
+    if (whiteCells.length >= 1 && whiteCells.length <= 8) {
+      const cluster = clusterCells(whiteCells);
+      if (cluster) {
+        hasBall = true;
+        boxes.push({
+          x: (cluster.minCol * cellW) / W,
+          y: (cluster.minRow * cellH) / H,
+          w: ((cluster.maxCol - cluster.minCol + 1) * cellW) / W,
+          h: ((cluster.maxRow - cluster.minRow + 1) * cellH) / H,
+          label: 'Bola',
+          color: '#22c55e', // green
+        });
+      }
+    }
 
-    // Ready when we see ball + club (grass is bonus confidence)
-    return hasBall && hasClub;
+    // Cluster dark cells into club bounding box
+    if (darkCells.length >= 2 && darkCells.length <= 30) {
+      const cluster = clusterCells(darkCells);
+      if (cluster) {
+        hasClub = true;
+        boxes.push({
+          x: (cluster.minCol * cellW) / W,
+          y: (cluster.minRow * cellH) / H,
+          w: ((cluster.maxCol - cluster.minCol + 1) * cellW) / W,
+          h: ((cluster.maxRow - cluster.minRow + 1) * cellH) / H,
+          label: 'Palo',
+          color: '#3b82f6', // blue
+        });
+      }
+    }
+
+    return { boxes, hasBall, hasClub };
   }, []);
 
-  // Run detection when not recording
-  useEffect(() => {
-    if (isRecording || error) {
-      // Stop detection while recording
-      if (detectionIntervalRef.current) {
-        clearInterval(detectionIntervalRef.current);
-        detectionIntervalRef.current = null;
-      }
-      setIsReady(false);
-      readyCalledRef.current = false;
-      return;
+  // Draw detection overlay
+  const drawOverlay = useCallback(() => {
+    const overlay = overlayCanvasRef.current;
+    const video = videoRef.current;
+    if (!overlay || !video) return;
+
+    const rect = video.getBoundingClientRect();
+    if (overlay.width !== rect.width || overlay.height !== rect.height) {
+      overlay.width = rect.width;
+      overlay.height = rect.height;
     }
 
-    detectionIntervalRef.current = window.setInterval(() => {
-      const detected = detectBallAndClub();
-      setIsReady(detected);
+    const ctx = overlay.getContext('2d');
+    if (!ctx) return;
 
-      if (detected && !readyCalledRef.current) {
-        readyCalledRef.current = true;
-        onReadyDetected?.();
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+    const boxes = detectionsRef.current;
+    const isMirrored = facingMode === 'user';
+
+    for (const box of boxes) {
+      let bx = box.x * overlay.width;
+      const by = box.y * overlay.height;
+      const bw = box.w * overlay.width;
+      const bh = box.h * overlay.height;
+
+      // Mirror for front camera
+      if (isMirrored) {
+        bx = overlay.width - bx - bw;
       }
 
-      // Reset after 3 seconds so it can trigger again if scene changes
-      if (!detected) {
-        readyCalledRef.current = false;
+      // Draw box
+      ctx.strokeStyle = box.color;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.setLineDash([]);
+
+      // Corner accents (solid)
+      const cornerLen = Math.min(bw, bh) * 0.25;
+      ctx.lineWidth = 3;
+      // Top-left
+      ctx.beginPath();
+      ctx.moveTo(bx, by + cornerLen);
+      ctx.lineTo(bx, by);
+      ctx.lineTo(bx + cornerLen, by);
+      ctx.stroke();
+      // Top-right
+      ctx.beginPath();
+      ctx.moveTo(bx + bw - cornerLen, by);
+      ctx.lineTo(bx + bw, by);
+      ctx.lineTo(bx + bw, by + cornerLen);
+      ctx.stroke();
+      // Bottom-left
+      ctx.beginPath();
+      ctx.moveTo(bx, by + bh - cornerLen);
+      ctx.lineTo(bx, by + bh);
+      ctx.lineTo(bx + cornerLen, by + bh);
+      ctx.stroke();
+      // Bottom-right
+      ctx.beginPath();
+      ctx.moveTo(bx + bw - cornerLen, by + bh);
+      ctx.lineTo(bx + bw, by + bh);
+      ctx.lineTo(bx + bw, by + bh - cornerLen);
+      ctx.stroke();
+
+      // Label
+      ctx.font = 'bold 11px sans-serif';
+      const textW = ctx.measureText(box.label).width + 8;
+      ctx.fillStyle = box.color;
+      ctx.fillRect(bx, by - 18, textW, 18);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(box.label, bx + 4, by - 5);
+    }
+  }, [facingMode]);
+
+  // Animation loop: detect + draw
+  useEffect(() => {
+    if (error) return;
+
+    let running = true;
+
+    const loop = () => {
+      if (!running) return;
+
+      const now = performance.now();
+
+      // Run detection every 150ms
+      if (!isRecording && now - lastDetectTimeRef.current > 150) {
+        lastDetectTimeRef.current = now;
+        const { boxes, hasBall, hasClub } = runDetection();
+        detectionsRef.current = boxes;
+
+        const ready = hasBall && hasClub;
+        setIsReady(ready);
+
+        if (ready && !readyCalledRef.current) {
+          readyCalledRef.current = true;
+          onReadyDetected?.();
+        }
+        if (!ready) {
+          readyCalledRef.current = false;
+        }
       }
-    }, 500); // Check every 500ms
+
+      // Clear overlay while recording
+      if (isRecording) {
+        detectionsRef.current = [];
+      }
+
+      // Draw overlay every frame for smooth rendering
+      drawOverlay();
+
+      rafRef.current = requestAnimationFrame(loop);
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
 
     return () => {
-      if (detectionIntervalRef.current) {
-        clearInterval(detectionIntervalRef.current);
-      }
+      running = false;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [isRecording, error, detectBallAndClub, onReadyDetected]);
+  }, [isRecording, error, runDetection, drawOverlay, onReadyDetected]);
 
   if (error) {
     return (
@@ -194,7 +334,12 @@ export default function CameraViewfinder({
         className={`h-full w-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`}
       />
       {/* Hidden canvas for frame analysis */}
-      <canvas ref={canvasRef} className="hidden" />
+      <canvas ref={analysisCanvasRef} className="hidden" />
+      {/* Overlay canvas for drawing detection boxes */}
+      <canvas
+        ref={overlayCanvasRef}
+        className={`absolute inset-0 h-full w-full pointer-events-none ${facingMode === 'user' ? '' : ''}`}
+      />
 
       {/* Camera switch button */}
       {!isRecording && (
@@ -226,4 +371,55 @@ export default function CameraViewfinder({
       )}
     </div>
   );
+}
+
+// Cluster adjacent cells into a bounding box
+function clusterCells(
+  cells: { col: number; row: number; count: number }[]
+): { minCol: number; maxCol: number; minRow: number; maxRow: number } | null {
+  if (cells.length === 0) return null;
+
+  // Find the largest connected cluster using simple flood fill
+  const key = (c: number, r: number) => `${c},${r}`;
+  const cellSet = new Set(cells.map((c) => key(c.col, c.row)));
+  const visited = new Set<string>();
+  let bestCluster: { col: number; row: number }[] = [];
+
+  for (const cell of cells) {
+    const k = key(cell.col, cell.row);
+    if (visited.has(k)) continue;
+
+    // BFS
+    const cluster: { col: number; row: number }[] = [];
+    const queue = [{ col: cell.col, row: cell.row }];
+    visited.add(k);
+
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      cluster.push(cur);
+
+      for (const [dc, dr] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+        const nc = cur.col + dc;
+        const nr = cur.row + dr;
+        const nk = key(nc, nr);
+        if (cellSet.has(nk) && !visited.has(nk)) {
+          visited.add(nk);
+          queue.push({ col: nc, row: nr });
+        }
+      }
+    }
+
+    if (cluster.length > bestCluster.length) {
+      bestCluster = cluster;
+    }
+  }
+
+  if (bestCluster.length === 0) return null;
+
+  return {
+    minCol: Math.min(...bestCluster.map((c) => c.col)),
+    maxCol: Math.max(...bestCluster.map((c) => c.col)),
+    minRow: Math.min(...bestCluster.map((c) => c.row)),
+    maxRow: Math.max(...bestCluster.map((c) => c.row)),
+  };
 }
