@@ -59,12 +59,12 @@ export default function RecordsPage() {
   }, []);
 
   return (
-    <div className="flex flex-1 flex-col pb-20">
+    <div className="flex h-full flex-col">
       <header className="flex-shrink-0 border-b border-white/10 bg-[#111] px-4 py-4">
         <h1 className="text-xl font-bold">Records Personales</h1>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 pb-24">
         {loading ? (
           <div className="flex justify-center py-12">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />

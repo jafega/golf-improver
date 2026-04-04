@@ -35,12 +35,22 @@ input, textarea, select {
   user-select: text;
 }
 
-/* Prevent pull-to-refresh on mobile but allow scroll within flex containers */
-html, body {
-  overflow: hidden;
-  overflow: clip;
+/* Fixed viewport, child elements handle their own scroll */
+html {
   height: 100%;
   height: 100dvh;
+  overflow: hidden;
+}
+body {
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* Allow scroll inside any element that needs it */
+.overflow-y-auto {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 /* Custom scrollbar for shot lists */

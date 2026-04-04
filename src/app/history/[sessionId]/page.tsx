@@ -52,7 +52,7 @@ export default function SessionDetailPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col pb-20">
+    <div className="flex h-full flex-col">
       <header className="flex-shrink-0 border-b border-white/10 bg-[#111] px-4 py-3">
         <div className="flex items-center justify-between">
           <button onClick={() => router.back()} className="text-accent text-sm">
@@ -130,7 +130,7 @@ export default function SessionDetailPage() {
       )}
 
       {/* Shot list */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+      <div className="flex-1 min-h-0 overflow-y-auto p-3 pb-24 space-y-2">
         {shots.map((shot) => {
           const club = getClubInfo(shot.club);
           const isSelected = selectedShot?.id === shot.id;
