@@ -217,7 +217,7 @@ const CourseMap = forwardRef<CourseMapHandle>(function CourseMap(_, ref) {
   }
 
   return (
-    <div className="relative flex-1 bg-zinc-900" style={{ zIndex: 0 }}>
+    <div className="relative h-full w-full bg-zinc-900">
       <APIProvider apiKey={API_KEY} libraries={['places']}>
         <MapContent onMapReady={handleMapReady} />
       </APIProvider>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useCampoStore } from '@/stores/campo-store';
 import { watchPosition } from '@/lib/geolocation';
 import { CourseData, createEmptyCourse } from '@/types/course';
@@ -24,137 +24,102 @@ export default function CampoPage() {
   const [detecting, setDetecting] = useState(true);
   const [detectionStatus, setDetectionStatus] = useState('Obteniendo ubicacion GPS...');
 
-  // Start GPS
   useEffect(() => {
     const cleanup = watchPosition(
       (pos) => setUserPosition({ lat: pos.lat, lng: pos.lng }, pos.accuracy),
-      (error) => {
-        setGpsError(error);
-        setDetecting(false);
-        setDetectionStatus(error);
-      }
+      (error) => { setGpsError(error); setDetecting(false); }
     );
     return cleanup;
   }, [setUserPosition, setGpsError]);
 
-  // Load custom club distances
   useEffect(() => { loadCustomDistances(); }, []);
 
-  // Auto-detect course when GPS is ready
   useEffect(() => {
     if (!userPosition || autoDetectedRef.current || activeCourse) return;
     autoDetectedRef.current = true;
 
     async function autoDetect() {
       setDetectionStatus('Buscando campo de golf cercano...');
-
-      // 1. Check saved courses first (within 2km)
       const saved = await db.getAllCourses();
       for (const course of saved) {
-        const dist = haversineQuick(userPosition!, course.location);
-        if (dist < 2000) {
-          setActiveCourse(course);
-          setDetecting(false);
-          return;
+        if (haversineQuick(userPosition!, course.location) < 2000) {
+          setActiveCourse(course); setDetecting(false); return;
         }
       }
-
-      // 2. Search via Google Places
       try {
         await waitForGoogleMaps(5000);
         const results = await searchNearbyCourses(userPosition!.lat, userPosition!.lng);
-
         if (results.length > 0) {
           const best = results[0];
-          // Check if already saved
-          const existing = best.placeId
-            ? await db.getCourseByPlaceId(best.placeId)
-            : undefined;
-
-          if (existing) {
-            setActiveCourse(existing);
-          } else {
-            const course = createEmptyCourse(best.name, best.location, best.placeId, best.address);
-            await db.saveCourse(course);
-            setActiveCourse(course);
-          }
-          setDetecting(false);
-          return;
+          const existing = best.placeId ? await db.getCourseByPlaceId(best.placeId) : undefined;
+          const course = existing ?? createEmptyCourse(best.name, best.location, best.placeId, best.address);
+          if (!existing) await db.saveCourse(course);
+          setActiveCourse(course); setDetecting(false); return;
         }
-      } catch {
-        // Places API failed, create generic
-      }
-
-      // 3. No course found - create a generic one at current location
-      setDetectionStatus('No se encontro campo. Creando campo generico...');
+      } catch { /* */ }
       const generic = createEmptyCourse('Campo de Golf', userPosition!);
-      await db.saveCourse(generic);
-      setActiveCourse(generic);
-      setDetecting(false);
+      await db.saveCourse(generic); setActiveCourse(generic); setDetecting(false);
     }
-
     autoDetect();
   }, [userPosition, activeCourse, setActiveCourse]);
 
-  const handleCaptureMap = useCallback(async () => {
-    return mapRef.current?.captureScreenshot() ?? null;
-  }, []);
-
   return (
-    <div className="relative flex h-full flex-col">
-      {/* Header - above map */}
-      <header className="relative z-10 flex-shrink-0 bg-[#111] border-b border-white/5">
-        <div className="flex items-center justify-between px-4 py-2">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-sm font-bold truncate">
-              {activeCourse?.name ?? 'Detectando campo...'}
-            </h1>
-            {activeCourse?.address && (
-              <p className="text-[10px] text-zinc-500 truncate">{activeCourse.address}</p>
+    <div className="h-full w-full relative overflow-hidden">
+      {/* LAYER 1: Map background (fills everything) */}
+      <div className="absolute inset-0">
+        {detecting && !activeCourse ? (
+          <div className="flex h-full items-center justify-center bg-zinc-900">
+            <div className="text-center">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent mx-auto mb-3" />
+              <p className="text-sm text-zinc-400">{detectionStatus}</p>
+            </div>
+          </div>
+        ) : (
+          <CourseMap ref={mapRef} />
+        )}
+      </div>
+
+      {/* LAYER 2: Header (fixed top) */}
+      <div className="fixed top-0 left-0 right-0" style={{ zIndex: 20 }}>
+        <header className="bg-[#111] border-b border-white/10">
+          <div className="flex items-center justify-between px-4 py-2">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-sm font-bold truncate">
+                {activeCourse?.name ?? 'Detectando campo...'}
+              </h1>
+              {activeCourse?.address && (
+                <p className="text-[10px] text-zinc-500 truncate">{activeCourse.address}</p>
+              )}
+            </div>
+            {activeCourse && (
+              <button
+                onClick={() => {
+                  autoDetectedRef.current = false;
+                  useCampoStore.getState().reset();
+                  setDetecting(true);
+                  setDetectionStatus('Buscando campo de golf cercano...');
+                }}
+                className="flex-shrink-0 ml-2 text-zinc-500 text-xs"
+              >
+                Cambiar
+              </button>
             )}
           </div>
-          {activeCourse && (
-            <button
-              onClick={() => {
-                autoDetectedRef.current = false;
-                useCampoStore.getState().reset();
-                setDetecting(true);
-                setDetectionStatus('Buscando campo de golf cercano...');
-              }}
-              className="flex-shrink-0 ml-2 text-zinc-500 text-xs"
-            >
-              Cambiar
-            </button>
-          )}
-        </div>
-        {activeCourse && <HoleSelector />}
-      </header>
+          {activeCourse && <HoleSelector />}
+        </header>
+      </div>
 
-      {/* Main content */}
-      {detecting && !activeCourse ? (
-        <div className="flex flex-1 items-center justify-center bg-zinc-900">
-          <div className="text-center">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent mx-auto mb-3" />
-            <p className="text-sm text-zinc-400">{detectionStatus}</p>
-          </div>
-        </div>
-      ) : (
-        <CourseMap ref={mapRef} />
-      )}
+      {/* LAYER 3: Distance panel (fixed above bottom nav) */}
+      <div className="fixed left-0 right-0" style={{ zIndex: 20, bottom: '64px' }}>
+        <DistancePanel />
+      </div>
 
-      {/* Distance Panel - above map */}
-      {activeCourse && (
-        <div className="relative z-10 flex-shrink-0">
-          <DistancePanel />
-        </div>
-      )}
-
+      {/* LAYER 4: Bottom Nav */}
       <BottomNav />
     </div>
   );
 }
 
-// Quick Haversine (good enough for "is user near this course?")
 function haversineQuick(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const R = 6371000;
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -175,38 +140,20 @@ function waitForGoogleMaps(timeoutMs: number): Promise<void> {
   });
 }
 
-interface PlaceSearchResult {
-  name: string;
-  placeId: string;
-  address: string;
-  location: { lat: number; lng: number };
-}
-
-function searchNearbyCourses(lat: number, lng: number): Promise<PlaceSearchResult[]> {
+function searchNearbyCourses(lat: number, lng: number): Promise<{ name: string; placeId: string; address: string; location: { lat: number; lng: number } }[]> {
   return new Promise((resolve) => {
     const service = new window.google.maps.places.PlacesService(document.createElement('div'));
     service.nearbySearch(
-      {
-        location: new window.google.maps.LatLng(lat, lng),
-        radius: 5000,
-        type: 'golf_course' as unknown as string,
-      },
+      { location: new window.google.maps.LatLng(lat, lng), radius: 5000, type: 'golf_course' as unknown as string },
       (results, status) => {
         if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
-          resolve(
-            results
-              .filter((r) => r.geometry?.location)
-              .map((r) => ({
-                name: r.name ?? 'Campo de golf',
-                placeId: r.place_id ?? '',
-                address: r.vicinity ?? '',
-                location: { lat: r.geometry!.location!.lat(), lng: r.geometry!.location!.lng() },
-              }))
-          );
-        } else {
-          resolve([]);
-        }
-      }
+          resolve(results.filter((r) => r.geometry?.location).map((r) => ({
+            name: r.name ?? 'Campo de golf', placeId: r.place_id ?? '',
+            address: r.vicinity ?? '',
+            location: { lat: r.geometry!.location!.lat(), lng: r.geometry!.location!.lng() },
+          })));
+        } else resolve([]);
+      },
     );
   });
 }
