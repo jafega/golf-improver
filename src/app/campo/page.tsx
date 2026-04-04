@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useCampoStore } from '@/stores/campo-store';
 import { watchPosition } from '@/lib/geolocation';
 import { CourseData, createEmptyCourse } from '@/types/course';
 import * as db from '@/lib/db';
 import BottomNav from '@/components/ui/BottomNav';
-import CourseMap from '@/components/campo/CourseMap';
+import CourseMap, { CourseMapHandle } from '@/components/campo/CourseMap';
 import HoleSelector from '@/components/campo/HoleSelector';
 import DistancePanel from '@/components/campo/DistancePanel';
 
@@ -19,6 +19,7 @@ export default function CampoPage() {
     userPosition,
   } = useCampoStore();
   const autoDetectedRef = useRef(false);
+  const mapRef = useRef<CourseMapHandle>(null);
   const [detecting, setDetecting] = useState(true);
   const [detectionStatus, setDetectionStatus] = useState('Obteniendo ubicacion GPS...');
 
@@ -91,6 +92,10 @@ export default function CampoPage() {
     autoDetect();
   }, [userPosition, activeCourse, setActiveCourse]);
 
+  const handleCaptureMap = useCallback(async () => {
+    return mapRef.current?.captureScreenshot() ?? null;
+  }, []);
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -130,13 +135,13 @@ export default function CampoPage() {
           </div>
         </div>
       ) : (
-        <CourseMap />
+        <CourseMap ref={mapRef} />
       )}
 
       {/* Distance Panel */}
       {activeCourse && (
         <div className="flex-shrink-0">
-          <DistancePanel />
+          <DistancePanel onCaptureMap={handleCaptureMap} />
         </div>
       )}
 
