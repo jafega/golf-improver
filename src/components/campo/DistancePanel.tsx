@@ -56,11 +56,15 @@ export default function DistancePanel() {
 
       if (userPos) {
         try {
+          // Dynamic zoom: closer = more zoom, farther = less zoom to see whole hole
+          const dist = distanceToPin ?? 150;
+          const zoom = dist > 300 ? '15' : dist > 200 ? '16' : dist > 100 ? '17' : '18';
+
           const screenshotParams = new URLSearchParams({
             lat: String(userPos.lat),
             lng: String(userPos.lng),
             hole: String(currentHole),
-            zoom: '17',
+            zoom,
           });
           if (pinPos) {
             screenshotParams.set('pinLat', String(pinPos.lat));

@@ -30,18 +30,33 @@ export interface RoundState {
   endedAt?: string;
 }
 
-export function createEmptyCourse(name: string, location: GeoCoord, placeId?: string, address?: string): CourseData {
+export function createEmptyCourse(
+  name: string,
+  location: GeoCoord,
+  placeId?: string,
+  address?: string,
+  numHoles: number = 18
+): CourseData {
   return {
     id: crypto.randomUUID(),
     name,
     placeId,
     location,
     address,
-    holes: Array.from({ length: 18 }, (_, i) => ({
+    holes: Array.from({ length: numHoles }, (_, i) => ({
       number: i + 1,
       par: 4,
     })),
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function addHoleToCourse(course: CourseData): CourseData {
+  const nextNumber = course.holes.length + 1;
+  return {
+    ...course,
+    holes: [...course.holes, { number: nextNumber, par: 4 }],
     updatedAt: new Date().toISOString(),
   };
 }
