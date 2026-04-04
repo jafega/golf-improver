@@ -9,24 +9,64 @@ export async function POST(request: NextRequest) {
 
     // === STRATEGY MODE ===
     if (strategyRequest) {
-      const { distanceToPin, par, hole, courseName, recommendedClub } = strategyRequest;
-
-      const prompt = `Eres un caddie de golf experto y motivador. El jugador esta en el hoyo ${hole} (par ${par}) del campo "${courseName}".
-La bandera esta a ${distanceToPin} metros. El palo recomendado es ${recommendedClub}.
-
-Dame una estrategia practica para este golpe en 3-4 frases. Incluye:
-- Que palo usar y tipo de golpe (draw, fade, recto, alto, bajo, punch)
-- Donde apuntar exactamente (centro del green, lado izquierdo, etc.)
-- Que peligros evitar tipicos a esta distancia (bunkers, agua, arboles)
-- Un tip de confianza mental para ejecutar bien
-
-Habla en espanol, se directo y motivador. Texto plano, NO uses JSON.`;
+      const { distanceToPin, par, hole, courseName, recommendedClub, mapImage } = strategyRequest;
 
       try {
+        const content: Anthropic.Messages.ContentBlockParam[] = [];
+
+        if (mapImage && typeof mapImage === 'string' && mapImage.startsWith('data:image')) {
+          // Send satellite image for visual obstacle analysis
+          content.push({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: 'image/png',
+              data: mapImage.replace(/^data:image\/\w+;base64,/, ''),
+            },
+          });
+          content.push({
+            type: 'text',
+            text: `Eres un caddie de golf experto. MIRA esta imagen satelite del hoyo donde esta el jugador.
+
+DATOS:
+- Hoyo ${hole}, Par ${par}, Campo "${courseName}"
+- Distancia a la bandera: ${distanceToPin} metros
+- Palo recomendado: ${recommendedClub}
+- El marcador azul (T) es el jugador, el marcador rojo (${hole}) es la bandera
+- La linea verde conecta al jugador con la bandera
+
+ANALIZA LO QUE VES EN LA IMAGEN SATELITE:
+- Bunkers: manchas claras/beige/blancas cerca del green o fairway
+- Agua/lagos: zonas oscuras azuladas o negras con bordes definidos
+- Arboles: masas de verde oscuro a los lados del fairway
+- Forma del green: si es grande, pequeño, protegido
+- Doglegs o curvas del hoyo
+- Cualquier otro obstaculo visible
+
+DAME UNA ESTRATEGIA BASADA EN LO QUE VES:
+1. Confirma o cambia el palo segun los obstaculos REALES que ves
+2. Tipo de golpe: draw, fade, recto, alto, bajo segun la situacion
+3. DONDE APUNTAR: se MUY especifico ("apunta al lado izquierdo del fairway porque a la derecha hay un bunker grande que se ve claramente")
+4. QUE EVITAR: nombra los peligros REALES que ves en la imagen con su posicion
+5. Un tip de confianza
+
+Habla en espanol, se directo y motivador. 4-5 frases. Texto plano, NO JSON.`,
+          });
+        } else {
+          // Text-only strategy (no image available)
+          content.push({
+            type: 'text',
+            text: `Eres un caddie de golf experto y motivador. El jugador esta en el hoyo ${hole} (par ${par}) del campo "${courseName}".
+La bandera esta a ${distanceToPin} metros. El palo recomendado es ${recommendedClub}.
+
+Dame una estrategia practica en 3-4 frases. Incluye que palo usar, tipo de golpe, donde apuntar, que peligros evitar, y un tip de confianza. Habla en espanol. Texto plano, NO JSON.`,
+          });
+        }
+
         const strategyMsg = await anthropic.messages.create({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 400,
-          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 500,
+          messages: [{ role: 'user', content }],
         });
         const textBlock = strategyMsg.content.find((b) => b.type === 'text');
         return NextResponse.json({

@@ -48,6 +48,35 @@ export default function DistancePanel() {
     setStrategy(null);
 
     try {
+      // Step 1: Capture satellite map screenshot via server proxy
+      let mapImage: string | null = null;
+      const store = useCampoStore.getState();
+      const userPos = store.userPosition;
+      const pinPos = store.pinPosition;
+
+      if (userPos) {
+        try {
+          const screenshotParams = new URLSearchParams({
+            lat: String(userPos.lat),
+            lng: String(userPos.lng),
+            hole: String(currentHole),
+            zoom: '17',
+          });
+          if (pinPos) {
+            screenshotParams.set('pinLat', String(pinPos.lat));
+            screenshotParams.set('pinLng', String(pinPos.lng));
+          }
+          const mapRes = await fetch(`/api/map-screenshot?${screenshotParams}`);
+          if (mapRes.ok) {
+            const mapData = await mapRes.json();
+            mapImage = mapData.image ?? null;
+          }
+        } catch {
+          // Continue without image
+        }
+      }
+
+      // Step 2: Send to Claude with map image
       const response = await fetch('/api/analyze-shot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -61,6 +90,7 @@ export default function DistancePanel() {
             hole: currentHole,
             courseName: activeCourse?.name ?? 'campo desconocido',
             recommendedClub: recommendedClub.label,
+            mapImage,
           },
         }),
       });
