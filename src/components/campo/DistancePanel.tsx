@@ -92,7 +92,7 @@ export default function DistancePanel() {
     <>
       {/* === FLOATING STRATEGY OVERLAY === */}
       {showStrategy && (
-        <div className="absolute inset-x-3 top-3 z-20 rounded-2xl bg-black/90 backdrop-blur-sm p-4 shadow-2xl animate-fade-in-up">
+        <div className="fixed inset-x-3 top-16 z-[60] rounded-2xl bg-black/90 backdrop-blur-sm p-4 shadow-2xl animate-fade-in-up">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <span className="text-lg">🧠</span>

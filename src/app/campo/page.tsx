@@ -102,8 +102,8 @@ export default function CampoPage() {
 
   return (
     <div className="relative flex h-full flex-col">
-      {/* Header */}
-      <header className="flex-shrink-0 bg-[#111] border-b border-white/5">
+      {/* Header - above map */}
+      <header className="relative z-10 flex-shrink-0 bg-[#111] border-b border-white/5">
         <div className="flex items-center justify-between px-4 py-2">
           <div className="min-w-0 flex-1">
             <h1 className="text-sm font-bold truncate">
@@ -142,9 +142,9 @@ export default function CampoPage() {
         <CourseMap ref={mapRef} />
       )}
 
-      {/* Distance Panel */}
+      {/* Distance Panel - above map */}
       {activeCourse && (
-        <div className="flex-shrink-0">
+        <div className="relative z-10 flex-shrink-0">
           <DistancePanel />
         </div>
       )}
