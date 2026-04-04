@@ -54,7 +54,7 @@ export default function SettingsPage() {
         <h1 className="text-xl font-bold">Ajustes</h1>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+      <div className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-6" style={{ WebkitOverflowScrolling: 'touch' as const, touchAction: 'pan-y' }}>
         {/* Club Distances */}
         <section>
           <h2 className="text-sm font-medium text-zinc-400 mb-1">Mis distancias por palo</h2>

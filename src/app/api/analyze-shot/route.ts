@@ -9,63 +9,36 @@ export async function POST(request: NextRequest) {
 
     // === STRATEGY MODE ===
     if (strategyRequest) {
-      const { distanceToPin, par, hole, courseName, recommendedClub, mapImage } = strategyRequest;
+      const { distanceToPin, par, hole, courseName, recommendedClub } = strategyRequest;
 
-      const content: Anthropic.Messages.ContentBlockParam[] = [];
-
-      // If we have a satellite map screenshot, send it for visual analysis
-      if (mapImage) {
-        content.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: 'image/jpeg',
-            data: mapImage.replace(/^data:image\/\w+;base64,/, ''),
-          },
-        });
-        content.push({
-          type: 'text',
-          text: `Eres un caddie de golf experto. Mira esta vista satelite del hoyo actual.
-
-El jugador (punto azul) esta en el hoyo ${hole} (par ${par}) del campo "${courseName}".
-La bandera (🚩) esta a ${distanceToPin} metros. El palo recomendado es ${recommendedClub}.
-
-ANALIZA LA IMAGEN SATELITE para identificar:
-- Bunkers (manchas blancas/beige cerca del green o en el fairway)
-- Lagos o agua (zonas oscuras/azules)
-- Arboles (masas verdes oscuras a los lados)
-- Forma del green (redondo, alargado, inclinado)
-- Doglegs o curvas del fairway
-- OB o fuera de limites
-
-Basandote en lo que VES en la imagen, dame una estrategia especifica:
-1. PALO: Confirma o cambia el palo recomendado segun los obstaculos
-2. TIPO DE GOLPE: draw, fade, recto, alto, bajo, punch...
-3. DONDE APUNTAR: se especifico (ej: "lado izquierdo del fairway para evitar el bunker de la derecha")
-4. QUE EVITAR: nombra los peligros REALES que ves en la imagen
-5. TIP: un consejo de confianza
-
-Habla en espanol, se directo y motivador. 3-5 frases maximo. Texto plano, NO JSON.`,
-        });
-      } else {
-        content.push({
-          type: 'text',
-          text: `Eres un caddie de golf experto. El jugador esta en el hoyo ${hole} (par ${par}) del campo "${courseName}".
+      const prompt = `Eres un caddie de golf experto y motivador. El jugador esta en el hoyo ${hole} (par ${par}) del campo "${courseName}".
 La bandera esta a ${distanceToPin} metros. El palo recomendado es ${recommendedClub}.
 
-Dame una estrategia concisa para este golpe. Incluye tipo de golpe, donde apuntar, obstaculos tipicos a evitar a esta distancia, y un tip de confianza. Habla en espanol, 3-4 frases. Texto plano, NO JSON.`,
-        });
-      }
+Dame una estrategia practica para este golpe en 3-4 frases. Incluye:
+- Que palo usar y tipo de golpe (draw, fade, recto, alto, bajo, punch)
+- Donde apuntar exactamente (centro del green, lado izquierdo, etc.)
+- Que peligros evitar tipicos a esta distancia (bunkers, agua, arboles)
+- Un tip de confianza mental para ejecutar bien
 
-      const strategyMsg = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 600,
-        messages: [{ role: 'user', content }],
-      });
-      const textBlock = strategyMsg.content.find((b) => b.type === 'text');
-      return NextResponse.json({
-        strategy: textBlock && textBlock.type === 'text' ? textBlock.text : 'No se pudo generar estrategia.',
-      });
+Habla en espanol, se directo y motivador. Texto plano, NO uses JSON.`;
+
+      try {
+        const strategyMsg = await anthropic.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 400,
+          messages: [{ role: 'user', content: prompt }],
+        });
+        const textBlock = strategyMsg.content.find((b) => b.type === 'text');
+        return NextResponse.json({
+          strategy: textBlock && textBlock.type === 'text' ? textBlock.text : 'No se pudo generar estrategia.',
+        });
+      } catch (strategyError) {
+        console.error('Strategy API error:', strategyError);
+        return NextResponse.json(
+          { error: 'Error al generar estrategia', details: String(strategyError) },
+          { status: 500 }
+        );
+      }
     }
 
     // === SHOT ANALYSIS MODE ===

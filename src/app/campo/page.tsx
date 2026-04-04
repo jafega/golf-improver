@@ -101,7 +101,7 @@ export default function CampoPage() {
   }, []);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
       {/* Header */}
       <header className="flex-shrink-0 bg-[#111] border-b border-white/5">
         <div className="flex items-center justify-between px-4 py-2">
@@ -145,7 +145,7 @@ export default function CampoPage() {
       {/* Distance Panel */}
       {activeCourse && (
         <div className="flex-shrink-0">
-          <DistancePanel onCaptureMap={handleCaptureMap} />
+          <DistancePanel />
         </div>
       )}
 

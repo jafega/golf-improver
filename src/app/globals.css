@@ -29,9 +29,16 @@ body {
   user-select: none;
 }
 
-/* Prevent pull-to-refresh on mobile */
+/* Allow text selection and interaction in inputs */
+input, textarea, select {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Prevent pull-to-refresh on mobile but allow scroll within flex containers */
 html, body {
   overflow: hidden;
+  overflow: clip;
   height: 100%;
   height: 100dvh;
 }
