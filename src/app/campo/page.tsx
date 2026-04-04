@@ -5,6 +5,7 @@ import { useCampoStore } from '@/stores/campo-store';
 import { watchPosition } from '@/lib/geolocation';
 import { CourseData, createEmptyCourse } from '@/types/course';
 import * as db from '@/lib/db';
+import { loadCustomDistances } from '@/lib/geo';
 import BottomNav from '@/components/ui/BottomNav';
 import CourseMap, { CourseMapHandle } from '@/components/campo/CourseMap';
 import HoleSelector from '@/components/campo/HoleSelector';
@@ -35,6 +36,9 @@ export default function CampoPage() {
     );
     return cleanup;
   }, [setUserPosition, setGpsError]);
+
+  // Load custom club distances
+  useEffect(() => { loadCustomDistances(); }, []);
 
   // Auto-detect course when GPS is ready
   useEffect(() => {

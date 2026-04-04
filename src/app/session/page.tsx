@@ -7,8 +7,8 @@ import { useSessionStore } from '@/stores/session-store';
 import { stopSpeaking } from '@/lib/speech';
 import { playGolfHitSound, playReadySound, speakReady, warmUpAudio } from '@/lib/sounds';
 import { createRecorder, getVideoExtension } from '@/lib/camera';
-import { saveVideo } from '@/lib/storage';
-import { generateThumbnail } from '@/lib/video-processing';
+import { saveVideo, loadVideo } from '@/lib/storage';
+import { extractFrames, generateThumbnail } from '@/lib/video-processing';
 import * as db from '@/lib/db';
 import { Shot, Session } from '@/types/session';
 import CameraViewfinder from '@/components/session/CameraViewfinder';
@@ -159,13 +159,26 @@ export default function SessionPage() {
       updateShot(updatedShot);
       await db.updateShot(updatedShot);
 
+      // Extract frames from the saved video
+      const videoBlob = await loadVideo(shot.videoStorageKey);
+      if (!videoBlob) throw new Error('Video not found');
+
+      const frames = await extractFrames(videoBlob, 5);
+
+      // Get previous shot tips for comparison
+      const prevShot = shots.length > 0 ? shots[shots.length - 1] : null;
+      const previousTips = prevShot?.analysis?.status === 'complete'
+        ? prevShot.analysis.swingTips
+        : undefined;
+
       const response = await fetch('/api/analyze-shot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          videoKey: shot.videoStorageKey,
+          frames: frames.map((f) => ({ dataUrl: f.dataUrl, label: f.label })),
           club: shot.club,
           shotNumber: shot.shotNumber,
+          previousTips,
         }),
       });
 

@@ -30,10 +30,32 @@ export function bearing(a: GeoCoord, b: GeoCoord): number {
   return (deg + 360) % 360;
 }
 
+// Cached custom distances (loaded async from IndexedDB)
+let customDistances: Record<string, number> | null = null;
+let customDistancesLoaded = false;
+
+export async function loadCustomDistances(): Promise<void> {
+  if (customDistancesLoaded) return;
+  try {
+    const db = await import('@/lib/db');
+    const saved = await db.getSetting<Record<string, number>>('customClubDistances');
+    if (saved) customDistances = saved;
+    customDistancesLoaded = true;
+  } catch {
+    // ignore
+  }
+}
+
+function getClubDistance(club: ClubInfo): number {
+  if (customDistances && customDistances[club.type] != null) {
+    return customDistances[club.type];
+  }
+  return club.typicalDistanceM;
+}
+
 /**
  * Recommend the best club for a given distance.
- * Picks the shortest club that still covers the distance.
- * Filters out putter for distances > 20m.
+ * Uses custom distances if configured, otherwise defaults.
  */
 export function recommendClub(distanceM: number): ClubInfo | null {
   if (distanceM <= 0) return null;
@@ -43,16 +65,22 @@ export function recommendClub(distanceM: number): ClubInfo | null {
     return true;
   });
 
-  // Sort by typical distance ascending
-  const sorted = [...candidates].sort((a, b) => a.typicalDistanceM - b.typicalDistanceM);
+  // Sort by actual distance ascending (custom or default)
+  const sorted = [...candidates].sort((a, b) => getClubDistance(a) - getClubDistance(b));
 
   // Find the shortest club that covers the distance
   for (const club of sorted) {
-    if (club.typicalDistanceM >= distanceM * 0.9) {
+    if (getClubDistance(club) >= distanceM * 0.9) {
       return club;
     }
   }
 
-  // If nothing covers it, return the longest club (Driver)
   return sorted[sorted.length - 1] ?? null;
+}
+
+/**
+ * Get the effective distance for a club (custom or default)
+ */
+export function getEffectiveDistance(club: ClubInfo): number {
+  return getClubDistance(club);
 }

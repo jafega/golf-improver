@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useCampoStore } from '@/stores/campo-store';
+import { speakTips, stopSpeaking } from '@/lib/speech';
 
 interface DistancePanelProps {
   onCaptureMap?: () => Promise<string | null>;
@@ -72,7 +73,10 @@ export default function DistancePanel({ onCaptureMap }: DistancePanelProps) {
 
       if (response.ok) {
         const data = await response.json();
-        setStrategy(data.strategy ?? 'No se pudo generar estrategia.');
+        const text = data.strategy ?? 'No se pudo generar estrategia.';
+        setStrategy(text);
+        // Auto-speak the strategy
+        speakTips([text]);
       } else {
         setStrategy('Error al obtener estrategia. Intentalo de nuevo.');
       }
@@ -195,13 +199,22 @@ export default function DistancePanel({ onCaptureMap }: DistancePanelProps) {
                   </div>
                   <div className="flex gap-2 mt-3">
                     <button
+                      onClick={() => {
+                        if (strategy) speakTips([strategy]);
+                      }}
+                      className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-lg active:bg-white/20"
+                      aria-label="Leer estrategia en voz alta"
+                    >
+                      🔊
+                    </button>
+                    <button
                       onClick={askStrategy}
                       className="flex-1 rounded-xl bg-accent py-2.5 text-sm font-bold text-black active:bg-accent/80"
                     >
                       Otra estrategia
                     </button>
                     <button
-                      onClick={() => setExpanded(false)}
+                      onClick={() => { stopSpeaking(); setExpanded(false); }}
                       className="rounded-xl bg-white/10 px-4 py-2.5 text-sm text-zinc-300 active:bg-white/20"
                     >
                       Cerrar
